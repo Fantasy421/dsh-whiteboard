@@ -30,6 +30,28 @@ npm pack
 
 ## 安装到桌面 DSH
 
+### 推荐：使用 GitHub Release 预构建包
+
+> **不要在添加插件时只填写 `dsh-whiteboard`。** npm 上有另一位作者的同名 **0.0.1** 占位包，没有声明 `dsh.bundle`，会触发「这个包没有声明组合包，无法作为插件安装」。本仓库尚未发布到 npm；包名相同不代表来源相同。
+
+在 DSH 的「设置 → 插件 → 添加插件」中填写以下**完整下载地址**，不要填写 Release 展示页、GitHub ZIP 源码下载页或裸包名：
+
+```text
+https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.1.1/dsh-whiteboard-0.1.1.tgz
+```
+
+如果有可用的 DSH CLI，同样可以执行：
+
+```bash
+dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.1.1/dsh-whiteboard-0.1.1.tgz
+```
+
+也可以从 [v0.1.1 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.1.1) 的 **Assets** 下载 `dsh-whiteboard-0.1.1.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
+
+预构建包包含 `package.json` 中的 `dsh.bundle.patch`、对应补丁、编译后的 host/client 和字体。针对 DSH `0.2.1-rc.3` 验证，其他版本如有报错，请同时提供 DSH 版本、原样安装输入及完整错误。
+
+### 开发者：本地构建与手动 profile 安装
+
 先保存工作并备份 profile；不要修改应用程序 ASAR。常见 desktop profile 位于 `~/.dsh/profiles/desktop`，以实际配置为准。
 
 1. 在源码目录完成 `npm pack`，记下生成 tarball 的绝对路径，然后使用 profile 原本的包管理器安装；不要混写 npm/pnpm 锁文件。以下示例针对 pnpm profile：
