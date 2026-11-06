@@ -1,4 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { zoomAtCenter, MIN_ZOOM, MAX_ZOOM } from './viewport.mjs';
 import { Excalidraw, MainMenu, CaptureUpdateAction, restoreElements, exportToBlob, exportToSvg, serializeAsJSON } from '@excalidraw/excalidraw';
 import { BoardSync } from './sync.mjs';
 import { safeNativeInput } from './scene.mjs';
@@ -18,6 +20,12 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
   const [api, setApi] = useState(null);
   const [status, setStatus] = useState({ kind: 'loading', message: '' });
   const [fullscreen, setFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  // A stable portal target preserves the native editor, selection and undo stack.
+  // Moving its DOM host escapes sidebar clipping without reparenting the React tree.
+  const [surface] = useState(() => document.createElement('div'));
+  const mountRef = useRef(null), expandRef = useRef(null);
+  const expanded = fullscreen && visible && !signal?.aborted;
   const [retry, setRetry] = useState(0);
   const syncRef = useRef(null), timerRef = useRef(null), visibleRef = useRef(visible), busyRef = useRef(false);
   const [ready, setReady] = useState(false);
@@ -61,12 +69,57 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
       if (syncRef.current === sync) syncRef.current = null;
     };
   }, [api, sessionId, rpc, signal, retry]);
+  useLayoutEffect(() => {
+    const parent = expanded ? document.body : mountRef.current;
+    surface.className = `dsh-wb-surface${expanded ? ' dsh-wb-surface--expanded' : ''}`;
+    if (surface.parentNode !== parent) {
+      const focused = document.activeElement;
+      parent?.appendChild(surface);
+      if (visible && !signal?.aborted && surface.contains(focused)) focused?.focus({ preventScroll: true });
+    }
+    // Layout changed, not content: don't fit/reset the user's zoom or pan.
+    api?.refresh();
+    const frame = requestAnimationFrame(() => { if (!signal?.aborted && visible) api?.refresh(); });
+    return () => cancelAnimationFrame(frame);
+  }, [surface, expanded, api, visible, signal]);
   useEffect(() => {
-    if (!fullscreen) return;
-    const keydown = e => { if (e.key === 'Escape') setFullscreen(false); };
-    window.addEventListener('keydown', keydown);
-    return () => window.removeEventListener('keydown', keydown);
-  }, [fullscreen]);
+    if (!visible) {
+      setFullscreen(false); busyRef.current = false;
+      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null }, captureUpdate: CaptureUpdateAction.NEVER });
+    }
+  }, [visible, api]);
+  useEffect(() => {
+    const close = () => {
+      // Abort may happen while a hidden tab is still mounted. Remove overlay now.
+      surface.className = 'dsh-wb-surface';
+      if (mountRef.current) mountRef.current.appendChild(surface); else surface.remove();
+      busyRef.current = false;
+      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null }, captureUpdate: CaptureUpdateAction.NEVER });
+      setFullscreen(false);
+    };
+    signal?.addEventListener('abort', close, { once: true });
+    if (signal?.aborted) close();
+    return () => signal?.removeEventListener('abort', close);
+  }, [signal, surface, api]);
+  useLayoutEffect(() => () => surface.remove(), [surface]);
+  function changeZoom(value) {
+    if (!api) return;
+    const next = zoomAtCenter(api.getAppState(), value);
+    api.updateScene({ appState: next, captureUpdate: CaptureUpdateAction.NEVER });
+    setZoom(next.zoom.value);
+  }
+  function onKeyDownCapture(event) {
+    if (!expanded || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || busyRef.current) return;
+    const state = api?.getAppState();
+    const target = event.target;
+    // Native Excalidraw stops Escape in bubble phase. Capture only a truly idle
+    // Escape; editing, selections, menus and body-portaled dialogs keep priority.
+    if (target?.isContentEditable || target?.closest?.('input, textarea, select, [role="dialog"], .Modal, details[open]')) return;
+    if (!state || state.editingTextElement || state.editingLinearElement || state.editingFrame || state.editingGroupId || state.newElement || state.multiElement || state.selectionElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged || state.openDialog || state.openMenu || state.openPopup || state.pasteDialog?.shown || Object.values(state.selectedElementIds ?? {}).some(Boolean) || (state.activeTool && state.activeTool.type !== 'selection')) return;
+    event.preventDefault(); event.stopPropagation();
+    setFullscreen(false);
+    expandRef.current?.focus({ preventScroll: true });
+  }
   useEffect(() => {
     const unload = event => {
       if (syncRef.current?.dirty) { event.preventDefault(); event.returnValue = ''; }
@@ -75,6 +128,7 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
     return () => window.removeEventListener('beforeunload', unload);
   }, []);
   const onChange = useCallback((elements, appState, files) => {
+    if (appState.zoom) setZoom(appState.zoom.value);
     const sync = syncRef.current;
     if (!sync?.base || sync.disposed) return;
     // Image placement is transient until Excalidraw attaches its embedded file.
@@ -115,18 +169,25 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
     try { await syncRef.current.discardLocalAndReload(); }
     catch (error) { setStatus({ kind: 'offline', message: error.message }); }
   }
-  return <section className={`dsh-whiteboard ${fullscreen ? 'dsh-whiteboard--fullscreen' : ''}`} aria-label="AI 协作白板">
+  return <><div className="dsh-wb-mount" ref={mountRef} />{createPortal(<section className="dsh-whiteboard" aria-label="AI 协作白板" onKeyDownCapture={onKeyDownCapture} onKeyDown={event => event.stopPropagation()}>
     <header className="dsh-wb-header">
       <strong>✎ 协作白板</strong>
       <span className={`dsh-wb-status dsh-wb-status--${status.kind}`} role="status" title={status.message}>{LABELS[status.kind] ?? status.kind}</span>
-      <button onClick={() => setFullscreen(f => !f)} aria-label={fullscreen ? '退出放大' : '放大画板'}>{fullscreen ? '收起' : '放大'}</button>
+      <button ref={expandRef} className="dsh-wb-expand" onClick={() => setFullscreen(f => !f)} aria-label={expanded ? '返回侧栏' : '大屏编辑'} aria-expanded={expanded} title={expanded ? '返回侧栏（Esc）' : '在页面大屏中编辑，不丢失当前视图和撤销历史'}>{expanded ? '↙ 返回侧栏' : '⤢ 大屏编辑'}</button>
     </header>
     <div className="dsh-wb-actions">
-      <button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应画面</button>
-      <button disabled={!ready} onClick={() => syncRef.current?.tick()}>立即保存</button>
-      <button disabled={!ready} onClick={() => exportFile('png')}>PNG</button>
-      <button disabled={!ready} onClick={() => exportFile('svg')}>SVG</button>
-      <button disabled={!ready} onClick={() => exportFile('excalidraw')}>源文件</button>
+      <div className="dsh-wb-zoom" role="group" aria-label="画布缩放">
+        <button disabled={!ready || zoom <= MIN_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value / 1.25)} aria-label="缩小画布" title="缩小画布">−</button>
+        <button disabled={!ready} onClick={() => changeZoom(1)} aria-label="重置缩放为 100%" title="点击恢复 100%">{Math.round(zoom * 100)}%</button>
+        <button disabled={!ready || zoom >= MAX_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value * 1.25)} aria-label="放大画布" title="放大画布">＋</button>
+      </div>
+      <button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应</button>
+      <button disabled={!ready} onClick={() => syncRef.current?.tick()}>保存</button>
+      <details className="dsh-wb-export"><summary>导出 ▾</summary><div>
+        <button disabled={!ready} onClick={() => exportFile('png')}>PNG</button>
+        <button disabled={!ready} onClick={() => exportFile('svg')}>SVG</button>
+        <button disabled={!ready} onClick={() => exportFile('excalidraw')}>源文件</button>
+      </div></details>
     </div>
     {status.message && <div className="dsh-wb-notice" role="alert">{status.message}
       {status.kind === 'conflict' && <button onClick={reloadRemote}>加载服务器版本</button>}
@@ -143,6 +204,6 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
       </Excalidraw>
     </div>
     {!ready && <div className="dsh-wb-loading">{status.kind === 'offline' ? '画板暂未加载，请重试。' : '正在准备画板…'}</div>}
-    <footer className="dsh-wb-hint">在左侧告诉 AI：“画一个流程图”或“修改我选中的部分”。约 1 秒同步；手绘内容是数据，不是指令。</footer>
-  </section>;
+    <footer className="dsh-wb-hint">{expanded ? '大屏编辑 · Esc 返回侧栏 · 缩放不改变共享图形。' : '侧栏太窄？点右上角“大屏编辑”。在聊天中告诉 AI 想画什么。'}</footer>
+  </section>, surface)}</>;
 }

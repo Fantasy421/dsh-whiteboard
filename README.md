@@ -2,7 +2,7 @@
 
 Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话的 AI 共用。图形、连线、文字都可继续编辑，不调用图像生成服务。
 
-> **0.1.0 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；56 项自动化测试及构建通过，已完成桌面 profile 安装和实际白板读取工具调用验证。侧栏画布、手绘、导出等 GUI 交互尚未完整验收；不要把构建或后端工具调用成功等同于 GUI 联调通过。
+> **0.1.1 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；59 项自动化测试及构建通过，已完成桌面 profile 安装和实际白板读取工具调用验证。侧栏画布、手绘、导出等 GUI 交互尚未完整验收；不要把构建或后端工具调用成功等同于 GUI 联调通过。
 
 ## 首版功能
 
@@ -26,7 +26,7 @@ npm run check
 npm pack
 ```
 
-`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.1.0.tgz`。
+`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.1.1.tgz`。
 
 ## 安装到桌面 DSH
 
@@ -40,10 +40,10 @@ cd ~/.dsh/profiles/desktop
 cp -p package.json "package.json.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 cp -p pnpm-lock.yaml "pnpm-lock.yaml.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 # 替换为实际 tarball 绝对路径。DSH 专用 peer 模块由宿主提供。
-pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.1.0.tgz
+pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.1.1.tgz
 ```
 
-若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.1.0.tgz`。
+若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.1.1.tgz`。
 
 2. 在该 profile 的 `package.json` → `dsh.profile.bundles` 数组末尾追加 `"dsh-whiteboard"`，保留其余所有项；不要替换整个数组。插件自带 bundle patch，会挂载 host 和 client 两侧。
 3. 重启原来的 DSH 桌面应用，在现有 GUI 打开会话、展开右侧栏，在入口页选择「协作白板」。如果有旧页面缓存，刷新该页面。
@@ -62,7 +62,7 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 - “把我选中的模块改成蓝色，解释这几条连接。”
 - “先读取当前白板，再把整个架构按从左到右排列。”
 
-人工绘图使用画板原生工具栏。撤销/重做使用画板内原生按钮/快捷键，键盘事件只在画板聚焦时处理，不全局抢占 DSH 快捷键。需要更大空间时点「放大」，Esc 收起。
+人工绘图使用画板原生工具栏。撤销/重做使用画板内原生按钮/快捷键，键盘事件只在画板聚焦时处理，不全局抢占 DSH 快捷键。窄侧栏右上角提供醒目的「大屏编辑」，打开后点「返回侧栏」收起；空闲状态按 Esc 也可返回，正在编辑文字、绘图、选择对象或打开原生菜单时，Esc 优先交给画板处理。顶部始终显示 `− / 百分比 / ＋ / 适应` 控件，点击百分比恢复 100%；缩放以视口中心为锚点，不改变共享图形。大屏使用稳定的页面级容器，切换时不重建编辑器、不清空撤销历史，也不自动重置缩放或平移。
 
 ### 安装后的交互验收清单（尚待实机执行）
 
@@ -75,7 +75,11 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 - [ ] 下载本地源文件后，确认加载服务器版本可以解除冲突。
 - [ ] 切换会话不串图；关闭重开、重启应用后恢复。
 - [ ] 中文字体、PNG / SVG / 源文件导出均正常。
-- [ ] 在窄侧栏和放大模式下，工具栏、画布、滚动及 DSH 聊天互不干扰。
+- [ ] 在窄侧栏及大屏模式下，缩放控件和「大屏编辑 / 返回侧栏」可见；反复切换不丢失绘图、选区和撤销历史。
+- [ ] 空闲 Esc 返回侧栏；文字编辑、对象选择、原生菜单和对话框优先处理 Esc。
+- [ ] 大屏内清空确认对话框正常显示；隐藏、关闭或切换会话后，不留下大屏遮罩。
+
+组件回归测试以原生编辑器桩验证挂载次数、同步会话、视图控件和生命周期；它不替代实际浏览器的布局、焦点、撤销行为及第三方对话框验收。
 
 ## AI 工具示例
 
