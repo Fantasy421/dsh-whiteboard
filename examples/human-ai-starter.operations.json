@@ -1,0 +1,13 @@
+[
+  {
+    "op": "add",
+    "id": "requirement",
+    "type": "rectangle",
+    "text": "需求",
+    "x": 80,
+    "y": 150,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#e7f5ff"
+  }
+]

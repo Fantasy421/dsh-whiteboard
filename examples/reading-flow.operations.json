@@ -1,0 +1,62 @@
+[
+  {
+    "op": "add",
+    "id": "input",
+    "type": "rectangle",
+    "text": "输入",
+    "x": 80,
+    "y": 100,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#e7f5ff"
+  },
+  {
+    "op": "add",
+    "id": "validate",
+    "type": "rectangle",
+    "text": "校验",
+    "x": 360,
+    "y": 100,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#fff3bf"
+  },
+  {
+    "op": "add",
+    "id": "complete",
+    "type": "rectangle",
+    "text": "完成",
+    "x": 640,
+    "y": 100,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#d3f9d8"
+  },
+  {
+    "op": "add",
+    "id": "note",
+    "type": "rectangle",
+    "text": "备注（未连接）",
+    "x": 360,
+    "y": 310,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#f3f0ff"
+  },
+  {
+    "op": "add",
+    "id": "input-validation",
+    "type": "arrow",
+    "startId": "input",
+    "endId": "validate",
+    "lineStyle": "straight"
+  },
+  {
+    "op": "add",
+    "id": "validation-complete",
+    "type": "arrow",
+    "startId": "validate",
+    "endId": "complete",
+    "lineStyle": "straight"
+  }
+]

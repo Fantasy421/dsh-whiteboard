@@ -1,0 +1,70 @@
+[
+  {
+    "op": "add",
+    "id": "client",
+    "type": "rectangle",
+    "text": "界面",
+    "x": 80,
+    "y": 180,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#e7f5ff"
+  },
+  {
+    "op": "add",
+    "id": "api",
+    "type": "rectangle",
+    "text": "服务",
+    "x": 380,
+    "y": 180,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#fff3bf"
+  },
+  {
+    "op": "add",
+    "id": "storage",
+    "type": "rectangle",
+    "text": "本地存储",
+    "x": 680,
+    "y": 60,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#d3f9d8"
+  },
+  {
+    "op": "add",
+    "id": "worker",
+    "type": "rectangle",
+    "text": "后台任务",
+    "x": 680,
+    "y": 300,
+    "width": 180,
+    "height": 90,
+    "backgroundColor": "#f3f0ff"
+  },
+  {
+    "op": "add",
+    "id": "client-api",
+    "type": "arrow",
+    "startId": "client",
+    "endId": "api",
+    "lineStyle": "straight"
+  },
+  {
+    "op": "add",
+    "id": "api-storage",
+    "type": "arrow",
+    "startId": "api",
+    "endId": "storage",
+    "lineStyle": "polyline"
+  },
+  {
+    "op": "add",
+    "id": "api-worker",
+    "type": "arrow",
+    "startId": "api",
+    "endId": "worker",
+    "lineStyle": "curved"
+  }
+]

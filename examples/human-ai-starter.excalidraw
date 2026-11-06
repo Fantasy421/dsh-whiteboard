@@ -1,0 +1,84 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://github.com/Fantasy421/dsh-whiteboard",
+  "elements": [
+    {
+      "id": "requirement",
+      "type": "rectangle",
+      "x": 80,
+      "y": 150,
+      "width": 180,
+      "height": 90,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#e7f5ff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "c000",
+      "roundness": {
+        "type": 3
+      },
+      "seed": 2027730852,
+      "version": 1,
+      "versionNonce": 2027730852,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "id": "requirement__label",
+          "type": "text"
+        }
+      ],
+      "updated": 0,
+      "link": null,
+      "locked": false
+    },
+    {
+      "id": "requirement__label",
+      "type": "text",
+      "x": 150,
+      "y": 182.5,
+      "width": 40,
+      "height": 25,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 1,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "c001",
+      "roundness": null,
+      "seed": 356785489,
+      "version": 2,
+      "versionNonce": 356785489,
+      "isDeleted": false,
+      "boundElements": null,
+      "updated": 0,
+      "link": null,
+      "locked": false,
+      "fontSize": 20,
+      "fontFamily": 1,
+      "text": "需求",
+      "originalText": "需求",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "requirement",
+      "autoResize": true,
+      "lineHeight": 1.25
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff",
+    "gridSize": null
+  },
+  "files": {}
+}

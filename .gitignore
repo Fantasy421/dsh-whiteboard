@@ -9,6 +9,10 @@ pack-report.json
 coverage/
 .DS_Store
 
+# Private raw demo recordings (publish reviewed GIFs only)
+docs/media/*.mp4
+docs/media/*.webm
+
 # Credentials and local configuration
 .env
 .env.*
