@@ -7,6 +7,10 @@ import { BoardSync } from './sync.mjs';
 import { safeNativeInput } from './scene.mjs';
 import { recoveryFor } from './recovery.mjs';
 import { HeaderMenu, HeaderMenuContext } from './header.jsx';
+import { hitReadingNode, readingNeighborhood } from './reading.mjs';
+import { ReadingOverlay } from './ReadingOverlay.jsx';
+const idleForReading = state => state && !state.editingTextElement && !state.editingLinearElement && !state.newElement && !state.multiElement && !state.isResizing && !state.isRotating && !state.selectedElementsAreBeingDragged && !state.openDialog;
+const readingViewport = state => ({ zoom: state.zoom?.value ?? 1, scrollX: state.scrollX ?? 0, scrollY: state.scrollY ?? 0, frameEnabled: state.frameRendering?.enabled !== false, frameClip: state.frameRendering?.clip !== false });
 const LINE_LABELS = { straight: '直线', curved: '曲线', polyline: '折线' };
 const editableLine = element => !element.isDeleted && !element.locked && ['line', 'arrow'].includes(element.type);
 const normalizeScene = scene => JSON.parse(JSON.stringify({ ...scene, elements: restoreElements(scene.elements, null, { repairBindings: true }) }));
@@ -24,6 +28,20 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
   const [zoom, setZoom] = useState(1);
   const [lineSelection, setLineSelection] = useState({ count: 0, style: null });
   const [menu, setMenu] = useState(null);
+  const [reading, setReading] = useState(false), [readingFocus, setReadingFocus] = useState(null);
+  const [readingScene, setReadingScene] = useState([]), [readingView, setReadingView] = useState({ zoom: 1, scrollX: 0, scrollY: 0 });
+  const readingRef = useRef(false), readingSignature = useRef(null), selectionGuardRef = useRef(null);
+  const readingPointer = useRef(null), readingPointers = useRef(new Set()), selectionRestoreRef = useRef(null);
+  const blockedRef = useRef(blocked); blockedRef.current = blocked;
+  const captureReadingView = useCallback((elements, state) => {
+    const signature = JSON.stringify(elements.map(element => [element.id, element.version, element.versionNonce, element.isDeleted]));
+    if (readingSignature.current !== signature) {
+      readingSignature.current = signature;
+      setReadingScene(structuredClone(elements));
+    }
+    const next = readingViewport(state);
+    setReadingView(previous => previous.zoom === next.zoom && previous.scrollX === next.scrollX && previous.scrollY === next.scrollY && previous.frameEnabled === next.frameEnabled && previous.frameClip === next.frameClip ? previous : next);
+  }, []);
   const summaryRefs = useRef(new Map());
   const [menuRoot, setMenuRoot] = useState(null);
   const menus = useMemo(() => ({ active: menu, setActive: setMenu, summaries: summaryRefs, panelRoot: menuRoot }), [menu, menuRoot]);
@@ -72,11 +90,12 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       onStatus: (kind, message = '') => { if (alive) setStatus({ kind, message }); },
       onScene: (scene, { initial }) => {
         if (!alive) return;
+        if (readingRef.current) captureReadingView(scene.elements, api.getAppState());
         api.addFiles(structuredClone(Object.values(scene.files)));
         api.updateScene({
           // Native editors may mutate element objects; never hand out the CAS baseline.
           elements: structuredClone(scene.elements),
-          appState: { selectedElementIds: Object.fromEntries(scene.selectedIds.map(id => [id, true])) },
+          appState: { selectedElementIds: readingRef.current ? {} : Object.fromEntries(scene.selectedIds.map(id => [id, true])) },
           captureUpdate: initial ? CaptureUpdateAction.NEVER : CaptureUpdateAction.IMMEDIATELY,
         });
         if (initial) {
@@ -124,6 +143,7 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       if (mountRef.current) mountRef.current.appendChild(surface); else surface.remove();
       busyRef.current = false;
       api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null, contextMenu: null }, captureUpdate: CaptureUpdateAction.NEVER });
+      readingRef.current = false; setReading(false); setReadingFocus(null);
       setFullscreen(false); setMenu(null);
     };
     signal?.addEventListener('abort', close, { once: true });
@@ -149,11 +169,14 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       setMenu(null); summaryRefs.current.get(menu)?.focus({ preventScroll: true });
       return;
     }
+    if (readingRef.current && readingFocus && !nativeBusy && !state?.openDialog && !state?.openMenu && !state?.contextMenu && !state?.openPopup && !target?.closest?.('input, textarea, select, [role="dialog"], .Modal')) {
+      event.preventDefault(); event.stopPropagation(); setReadingFocus(null); return;
+    }
     if (!expanded || busyRef.current) return;
     // Native Excalidraw stops Escape in bubble phase. Capture only a truly idle
     // Escape; editing, selections, menus and body-portaled dialogs keep priority.
     if (target?.isContentEditable || target?.closest?.('input, textarea, select, [role="dialog"], .Modal, details[open]')) return;
-    if (!state || state.editingTextElement || state.editingLinearElement || state.editingFrame || state.editingGroupId || state.newElement || state.multiElement || state.selectionElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged || state.openDialog || state.openMenu || state.openPopup || state.contextMenu || state.showHyperlinkPopup === 'editor' || state.pasteDialog?.shown || Object.values(state.selectedElementIds ?? {}).some(Boolean) || (state.activeTool && state.activeTool.type !== 'selection')) return;
+    if (!state || state.editingTextElement || state.editingLinearElement || state.editingFrame || state.editingGroupId || state.newElement || state.multiElement || state.selectionElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged || state.openDialog || state.openMenu || state.openPopup || state.contextMenu || state.showHyperlinkPopup === 'editor' || state.pasteDialog?.shown || Object.values(state.selectedElementIds ?? {}).some(Boolean) || (!readingRef.current && state.activeTool && state.activeTool.type !== 'selection')) return;
     event.preventDefault(); event.stopPropagation();
     setFullscreen(false);
     expandRef.current?.focus({ preventScroll: true });
@@ -172,14 +195,35 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
     // microtask alone cannot break React's synchronous update-depth loop.
     if (sync && rejectingRef.current === sync) return;
     if (appState.zoom) setZoom(appState.zoom.value);
+    if (readingRef.current && sync?.local) captureReadingView(sync.local.elements, appState);
     const selectedLines = elements.filter(element => editableLine(element) && appState.selectedElementIds?.[element.id]);
     const styles = new Set(selectedLines.map(element => element.elbowed ? 'polyline' : element.roundness ? 'curved' : element.points.length > 2 ? 'polyline' : 'straight'));
     const style = styles.size === 1 ? [...styles][0] : null;
     setLineSelection(previous => previous.count === selectedLines.length && previous.style === style ? previous : { count: selectedLines.length, style });
     if (!sync?.base || sync.disposed) return;
+    if (readingRef.current) {
+      // Reading callbacks never observe native edits or deselection into the CAS
+      // scene. Remote onScene already updates sync.local before native rendering.
+      const accepted = sync.local.elements;
+      if (elements.length !== accepted.length || elements.some((element, i) => element.id !== accepted[i]?.id || element.version !== accepted[i]?.version || element.versionNonce !== accepted[i]?.versionNonce || element.isDeleted !== accepted[i]?.isDeleted)) {
+        rejectingRef.current = sync;
+        queueMicrotask(() => {
+          try {
+            if (syncRef.current !== sync || sync.disposed || !readingRef.current) return;
+            api?.updateScene({ elements: structuredClone(sync.local.elements), appState: { selectedElementIds: {} }, captureUpdate: CaptureUpdateAction.NEVER });
+          } finally { if (rejectingRef.current === sync) rejectingRef.current = null; }
+        });
+      }
+      return;
+    }
     // Image placement is transient until Excalidraw attaches its embedded file.
     if (elements.some(e => !e.isDeleted && e.type === 'image' && e.fileId == null)) return;
-    const { rejected, scene } = safeNativeInput(elements, files, Object.keys(appState.selectedElementIds).filter(id => appState.selectedElementIds[id]));
+    // Native file caches are additive. A delayed image rejected during reading
+    // can leave an unreferenced file behind; never turn that cache into an edit
+    // on mode exit. Retain accepted files and image tombstone files for undo.
+    const imageFiles = new Set(elements.filter(element => element.type === 'image').map(element => element.fileId));
+    const sceneFiles = Object.fromEntries(Object.entries(files).filter(([id]) => imageFiles.has(id) || Object.hasOwn(sync.local.files, id)));
+    const { rejected, scene } = safeNativeInput(elements, sceneFiles, Object.keys(appState.selectedElementIds).filter(id => appState.selectedElementIds[id]));
     const unsupportedTool = ['embeddable', 'magicframe'].includes(appState.activeTool?.type);
     if (rejected || unsupportedTool) {
       rejectingRef.current = sync;
@@ -213,10 +257,90 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       });
       return;
     }
+    // Native view-mode transitions deselect elements. That is local navigation,
+    // not a shared selection edit. Keep the accepted selection through both
+    // transitions and restore it only after native view mode has actually ended.
+    if (readingRef.current || appState.viewModeEnabled || selectionGuardRef.current === sync) {
+      scene.selectedIds = [...sync.local.selectedIds];
+      if (!readingRef.current && !appState.viewModeEnabled && selectionGuardRef.current === sync) {
+        const selected = Object.keys(appState.selectedElementIds ?? {}).filter(id => appState.selectedElementIds[id]);
+        if (selectionRestoreRef.current?.sync === sync && selectionRestoreRef.current.applied && selected.length === sync.local.selectedIds.length && selected.every(id => sync.local.selectedIds.includes(id))) {
+          selectionGuardRef.current = null; selectionRestoreRef.current = null;
+        } else if (selectionRestoreRef.current?.sync !== sync) {
+          const restoration = { sync, applied: false };
+          selectionRestoreRef.current = restoration;
+          // The native prop-change callback precedes another queued deselection.
+          // Never release this guard on that first, pre-deselection callback.
+          queueMicrotask(() => {
+            if (syncRef.current !== sync || sync.disposed || readingRef.current || selectionRestoreRef.current !== restoration) return;
+            restoration.applied = true;
+            api?.updateScene({ appState: { selectedElementIds: Object.fromEntries(sync.local.selectedIds.map(id => [id, true])) }, captureUpdate: CaptureUpdateAction.NEVER });
+          });
+        }
+      }
+    }
     sync.observe(scene);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => { if (!busyRef.current) void sync.tick(); }, 550);
-  }, [api]);
+  }, [api, captureReadingView]);
+  function toggleReading() {
+    const sync = syncRef.current, state = api?.getAppState();
+    if (!ready || !visibleRef.current || signal?.aborted || blocked || !sync?.base || sync.disposed) return;
+    if (busyRef.current || !idleForReading(state)) {
+      setStatus({ kind: 'warning', message: '请先结束当前绘图、文字输入或弹窗，再切换阅读模式。' });
+      return;
+    }
+    // Preserve any already accepted unsaved edits before changing native view mode.
+    if (!readingRef.current) onChange(api.getSceneElementsIncludingDeleted(), state, api.getFiles());
+    selectionGuardRef.current = sync; selectionRestoreRef.current = null;
+    readingRef.current = !readingRef.current;
+    readingPointer.current = null; readingPointers.current.clear();
+    setReading(readingRef.current); setReadingFocus(null); setMenu(null);
+    if (readingRef.current) captureReadingView(api.getSceneElementsIncludingDeleted(), state);
+  }
+  function blockReadingInput(event) {
+    if (readingRef.current) { event.preventDefault(); event.stopPropagation(); }
+  }
+  function onReadingPointerDown(event) {
+    if (!readingRef.current || !ready || !visibleRef.current || blockedRef.current || signal?.aborted || event.target?.tagName !== 'CANVAS') return;
+    readingPointers.current.add(event.pointerId);
+    if (readingPointers.current.size !== 1 || event.isPrimary === false || event.button !== 0) { readingPointer.current = null; return; }
+    const state = api?.getAppState(), sync = syncRef.current;
+    if (!sync?.base || sync.disposed || state?.openMenu || state?.contextMenu || state?.openDialog || state?.openPopup) return;
+    busyRef.current = true;
+    readingPointer.current = { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now(), sync,
+      point: { x: (event.clientX - (state.offsetLeft ?? 0)) / state.zoom.value - state.scrollX, y: (event.clientY - (state.offsetTop ?? 0)) / state.zoom.value - state.scrollY } };
+  }
+  useEffect(() => {
+    if (!reading) return;
+    const cancel = () => { readingPointer.current = null; readingPointers.current.clear(); };
+    const move = event => {
+      const pointer = readingPointer.current;
+      if (pointer?.id === event.pointerId && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) readingPointer.current = null;
+    };
+    const up = event => {
+      const pointer = readingPointer.current;
+      readingPointers.current.delete(event.pointerId);
+      if (pointer?.id !== event.pointerId) return;
+      readingPointer.current = null;
+      if (!readingRef.current || !visibleRef.current || blockedRef.current || signal?.aborted || pointer.sync !== syncRef.current || pointer.sync.disposed || Date.now() - pointer.time > 600 || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) return;
+      setReadingFocus(hitReadingNode(api.getSceneElements(), pointer.point, { frameRendering: api.getAppState().frameRendering }));
+    };
+    window.addEventListener('pointermove', move, true); window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', cancel, true); window.addEventListener('blur', cancel);
+    signal?.addEventListener('abort', cancel, { once: true });
+    return () => {
+      cancel(); window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', cancel, true); window.removeEventListener('blur', cancel);
+      signal?.removeEventListener('abort', cancel);
+    };
+  }, [api, signal, reading]);
+  useEffect(() => {
+    if (!visible || blocked || signal?.aborted) { readingPointer.current = null; readingPointers.current.clear(); setReadingFocus(null); }
+  }, [visible, blocked, signal]);
+  useEffect(() => {
+    if (readingFocus && !readingNeighborhood(readingScene, readingFocus).focusId) setReadingFocus(null);
+  }, [readingScene, readingFocus]);
   useEffect(() => {
     if (!registerLeaveGuard) return;
     const leave = async () => {
@@ -239,7 +363,7 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
   }, [api, boardId, onChange, registerLeaveGuard, signal]);
   function changeLineStyle(lineStyle) {
     const sync = syncRef.current;
-    if (!api || !sync?.base || sync.disposed || !visibleRef.current || signal?.aborted || busyRef.current || blocked) return;
+    if (!api || !sync?.base || sync.disposed || !visibleRef.current || signal?.aborted || busyRef.current || blocked || readingRef.current) return;
     const state = api.getAppState();
     // Include deleted elements: replacing the native scene must not erase undo tombstones.
     const elements = api.getSceneElementsIncludingDeleted();
@@ -294,8 +418,13 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
     <header className="dsh-wb-header">
       {navigation || <strong title={boardName}>✎ {boardName}</strong>}
       <span className={`dsh-wb-status dsh-wb-status--${status.kind}`} role="status" title={status.message || LABELS[status.kind]}>{LABELS[status.kind] ?? status.kind}</span>
+      {reading && <button className="dsh-wb-reading-active" aria-label="退出阅读模式" aria-pressed="true" onClick={toggleReading} disabled={blocked || !visible || signal?.aborted} title="仅本地高亮；点击返回编辑">阅读中</button>}
       <button ref={expandRef} className="dsh-wb-expand" onClick={() => { setMenu(null); setFullscreen(f => !f); }} aria-label={expanded ? '返回侧栏' : '大屏编辑'} aria-expanded={expanded} title={expanded ? '返回侧栏（Esc）' : '在页面大屏中编辑，不丢失当前视图和撤销历史'}>{expanded ? '↙ 返回' : '⤢ 大屏'}</button>
       <HeaderMenu id="tools" label="更多白板操作" summary="···" title="缩放、保存和导出；选中连线时可一键调整线型" visible={visible} signal={signal} className="dsh-wb-more">
+        <div className="dsh-wb-menu-group" role="group" aria-label="阅读设置">
+          <button aria-label="阅读模式" aria-pressed={reading} disabled={!ready || blocked || !visible || signal?.aborted} onClick={toggleReading}>{reading ? '返回编辑' : '阅读模式'}</button>
+          <span>只读浏览；点击节点高亮直接关联，不改变共享图形。</span>
+        </div>
         <div className="dsh-wb-menu-group" role="group" aria-label="画布缩放">
           <span>视图</span><div className="dsh-wb-zoom">
             <button disabled={!ready || zoom <= MIN_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value / 1.25)} aria-label="缩小画布" title="缩小画布">−</button>
@@ -303,7 +432,7 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
             <button disabled={!ready || zoom >= MAX_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value * 1.25)} aria-label="放大画布" title="放大画布">＋</button>
           </div><button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应</button>
         </div>
-        {lineSelection.count > 0 && <div className="dsh-wb-menu-group" role="group" aria-label="选中连线走线" title={`修改 ${lineSelection.count} 条未锁定的连线`}>
+        {!reading && lineSelection.count > 0 && <div className="dsh-wb-menu-group" role="group" aria-label="选中连线走线" title={`修改 ${lineSelection.count} 条未锁定的连线`}>
           <span>选中连线</span>{LINE_STYLES.map(lineStyle => <button key={lineStyle} disabled={!ready || !visible || signal?.aborted || blocked} aria-label={`连线：${LINE_LABELS[lineStyle]}`} aria-pressed={lineSelection.style === lineStyle} onClick={() => changeLineStyle(lineStyle)}>{LINE_LABELS[lineStyle]}</button>)}
         </div>}
         <div className="dsh-wb-menu-group" role="group" aria-label="保存和导出">
@@ -319,17 +448,18 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       {status.kind === 'conflict' && <button onClick={reloadRemote}>加载服务器版本</button>}
       {!ready && status.kind === 'offline' && <button onClick={() => setRetry(n => n + 1)}>重新加载</button>}
     </div>}
-    <div className="dsh-wb-stage"><div className="dsh-wb-canvas" inert={blocked ? '' : undefined} aria-busy={blocked || undefined} style={{ visibility: ready ? 'visible' : 'hidden' }}>
+    <div className="dsh-wb-stage"><div className="dsh-wb-canvas" onPointerDownCapture={onReadingPointerDown} onDropCapture={blockReadingInput} onDragOverCapture={blockReadingInput} onPasteCapture={blockReadingInput} onCutCapture={blockReadingInput} inert={blocked ? '' : undefined} aria-busy={blocked || undefined} style={{ visibility: ready ? 'visible' : 'hidden' }}>
       <Excalidraw excalidrawAPI={onApi} onChange={onChange} langCode="zh-CN" name={boardName}
-        handleKeyboardGlobally={false} autoFocus={false} aiEnabled={false} validateEmbeddable={false}
+        viewModeEnabled={reading} handleKeyboardGlobally={false} autoFocus={false} aiEnabled={false} validateEmbeddable={false}
         onLinkOpen={(_element, event) => event.preventDefault()}
         onPointerDown={() => { busyRef.current = true; }}
         onPointerUp={finishInteraction}
         UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false, saveToActiveFile: false } }}>
-        <MainMenu><MainMenu.DefaultItems.ClearCanvas /><MainMenu.DefaultItems.ToggleTheme /></MainMenu>
+        <MainMenu>{!reading && <MainMenu.DefaultItems.ClearCanvas />}<MainMenu.DefaultItems.ToggleTheme /></MainMenu>
       </Excalidraw>
+      {reading && visible && !signal?.aborted && !blocked && <ReadingOverlay elements={readingScene} focusId={readingFocus} viewport={readingView} />}
     </div><div className="dsh-wb-menu-layer" ref={setMenuRoot} /></div>
     {!ready && <div className="dsh-wb-loading">{status.kind === 'offline' ? '画板暂未加载，请重试。' : '正在准备画板…'}</div>}
-    <footer className="dsh-wb-hint">{expanded ? '大屏编辑 · Esc 返回侧栏 · 缩放不改变共享图形。' : '侧栏太窄？点右上角“大屏编辑”。在聊天中告诉 AI 想画什么。'}</footer>
+    <footer className="dsh-wb-hint">{reading ? (readingFocus ? '阅读模式 · 橙色为当前节点，蓝色为直接关联。点空白或 Esc 清除；拖动可平移。' : '阅读模式 · 点击节点查看流入/流出关联；不改原图。点“阅读中”返回编辑。') : expanded ? '大屏编辑 · Esc 返回侧栏 · 缩放不改变共享图形。' : '侧栏太窄？点右上角“大屏编辑”。在聊天中告诉 AI 想画什么。'}</footer>
   </section></HeaderMenuContext.Provider>, surface)}</>;
 }

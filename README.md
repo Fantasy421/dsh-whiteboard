@@ -2,7 +2,7 @@
 
 Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话的 AI 共用。图形、连线、文字都可继续编辑，不调用图像生成服务。
 
-> **0.2.2 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；135 项自动化测试及构建通过，包含网页嵌入误操作白屏修复、紧凑顶部、多白板、线型编辑和刷新修复。侧栏画布、手绘、导出等真实 GUI 交互尚未完整验收；不要把构建、组件桩测试或后端工具调用成功等同于 GUI 联调通过。
+> **0.3.0 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；158 项自动化测试及构建通过，包含阅读模式、网页嵌入误操作白屏修复、紧凑顶部、多白板、线型编辑和刷新修复。侧栏画布、手绘、导出等真实 GUI 交互尚未完整验收；不要把构建、组件桩测试或后端工具调用成功等同于 GUI 联调通过。
 
 ## 功能
 
@@ -15,6 +15,14 @@ Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话
 - 版本号 CAS + 三方合并：不同对象的并发修改可合并；同一对象冲突时暂停同步，保留本地修改，不静默覆盖。
 - 浏览器本地恢复备份（容量受浏览器限制）；冲突时可先下载源文件，再明确选择加载服务器版本。
 - 字体随插件打包并由现有 DSH 已认证 `/api` 端点提供，不新增端口。
+
+### 0.3.0 阅读模式
+
+- 打开“更多 → 阅读模式”，单击流程节点，高亮当前节点（橙色）、直接相连的线和邻居节点（蓝色），含入边、出边和对应文字标签。只追踪原生显式绑定的一跳关系，不沿整条链递归，不把几何交叉或靠近的线猜成连接。
+- 点击空白或按 Esc 清除高亮；顶部“退出阅读模式”恢复编辑。拖动平移、缩放、右键菜单和多指手势不会被当成节点点击。切换白板重置阅读状态，隐藏或关闭画板清除高亮。
+- 高亮是指针穿透的 SVG 覆盖层，不修改图形颜色、版本或共享选区，也不写入导出文件；保持原生编辑器和已有撤销历史。阅读期间禁止拖入/粘贴等编辑输入，原有待保存草稿仍可正常保存，AI 的远程修改仍继续同步。
+- 支持旋转节点、曲线/折线和画框裁剪；点击不可见的框外内容不会选中节点。覆盖层使用理想几何而非原生随机手绘笔触，不额外绘制箭头头部；不承诺像素级重合。
+- 工作区验证：158 项自动化测试及生产构建通过，包含双阶段原生切换生命周期、只读图片缓存隔离和画框裁剪。真实 GUI 验收仍待完成：进出模式后的选区/撤销、窄侧栏与大屏下点击定位、平移缩放和触屏手势、AI 更新/删除焦点节点、画框裁剪、多白板切换与图片异步导入。纯函数测试、真实组件配原生生命周期桩的测试不等同于浏览器验收。本版本预构建包包含阅读模式；旧版本需要重新安装新版并刷新或重启 DSH。
 
 ### 0.2.2 网页嵌入白屏修复
 
@@ -42,7 +50,7 @@ Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话
 - 请求超时后释放同步队列，取消拖动或窗口失焦后恢复轮询；保存回包丢失时先读取确认，不盲目覆盖。额外并发版本使结果无法确认时仍保守暂停。
 - 旋转连线转换会补偿端点位置，后端重新绑定时保留已有世界坐标拐点；旋转与标签布局按无随机抖动的理想曲线计算，原生手绘笔触可能有少量偏差，尚待真实 GUI 验收。
 
-下方 v0.2.2 预构建包包含上述功能和修复。已安装旧版的用户需要重新安装新版并刷新或重启原 DSH；仅更新源码或刷新旧包不会增加新功能。
+下方 v0.3.0 预构建包包含上述功能和修复。已安装旧版的用户需要重新安装新版并刷新或重启原 DSH；仅更新源码或刷新旧包不会增加新功能。
 
 ## 开发与打包
 
@@ -54,7 +62,7 @@ npm run check
 npm pack
 ```
 
-`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.2.2.tgz`。
+`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.3.0.tgz`。
 
 ## 安装到桌面 DSH
 
@@ -65,16 +73,16 @@ npm pack
 在 DSH 的「设置 → 插件 → 添加插件」中填写以下**完整下载地址**，不要填写 Release 展示页、GitHub ZIP 源码下载页或裸包名：
 
 ```text
-https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.2/dsh-whiteboard-0.2.2.tgz
+https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.3.0/dsh-whiteboard-0.3.0.tgz
 ```
 
 如果有可用的 DSH CLI，同样可以执行：
 
 ```bash
-dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.2/dsh-whiteboard-0.2.2.tgz
+dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.3.0/dsh-whiteboard-0.3.0.tgz
 ```
 
-也可以从 [v0.2.2 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.2.2) 的 **Assets** 下载 `dsh-whiteboard-0.2.2.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
+也可以从 [v0.3.0 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.3.0) 的 **Assets** 下载 `dsh-whiteboard-0.3.0.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
 
 预构建包包含 `package.json` 中的 `dsh.bundle.patch`、对应补丁、编译后的 host/client 和字体。针对 DSH `0.2.1-rc.3` 验证，其他版本如有报错，请同时提供 DSH 版本、原样安装输入及完整错误。
 
@@ -90,10 +98,10 @@ cd ~/.dsh/profiles/desktop
 cp -p package.json "package.json.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 cp -p pnpm-lock.yaml "pnpm-lock.yaml.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 # 替换为实际 tarball 绝对路径。DSH 专用 peer 模块由宿主提供。
-pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.2.2.tgz
+pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.3.0.tgz
 ```
 
-若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.2.2.tgz`。
+若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.3.0.tgz`。
 
 2. 在该 profile 的 `package.json` → `dsh.profile.bundles` 数组末尾追加 `"dsh-whiteboard"`，保留其余所有项；不要替换整个数组。插件自带 bundle patch，会挂载 host 和 client 两侧。
 3. 重启原来的 DSH 桌面应用，在现有 GUI 打开会话、展开右侧栏，在入口页选择「协作白板」。如果有旧页面缓存，刷新该页面。
@@ -171,7 +179,7 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 
 `lineStyle` 只用于 `line` / `arrow`：`straight`（直线）、`curved`（曲线）、`polyline`（折线）；不在普通节点或 `delete` 操作上填写它。省略则保持现有默认行为。`points` 是相对该线条 `x/y` 原点的 `[x,y]` 数组，而不是绝对画布坐标；多点路径可精确指定经过哪些位置。将多点线显式切换为 `straight` 会收为首尾两点。
 
-例如，**先读最新 revision**，再将下面操作加入 `whiteboard_patch.operations`（适用于 v0.2.2）：
+例如，**先读最新 revision**，再将下面操作加入 `whiteboard_patch.operations`（适用于 v0.3.0）：
 
 ```json
 [
@@ -206,6 +214,7 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 - [恢复备份](src/recovery.mjs)：按会话/白板隔离，保留旧 default 的浏览器备份键。
 - [同步](src/sync.mjs)：三方合并、恢复备份、并发和冲突状态。
 - [界面](src/Whiteboard.jsx) / [客户端注册](src/client.jsx)：画板、导出、侧栏插槽。
+- [阅读关系与命中](src/reading.mjs) / [高亮覆盖层](src/ReadingOverlay.jsx)：一跳邻居、旋转/画框裁剪、仅本地的阅读视图。
 - [构建](scripts/build.mjs)：Host ESM + DSH lazy CJS 客户端，共用宿主 React，不重复打包 React。
 
 ## 许可证
