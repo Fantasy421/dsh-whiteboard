@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { zoomAtCenter, MIN_ZOOM, MAX_ZOOM } from './viewport.mjs';
-import { Excalidraw, MainMenu, CaptureUpdateAction, restoreElements, exportToBlob, exportToSvg, serializeAsJSON } from '@excalidraw/excalidraw';
+import { Excalidraw, MainMenu, CaptureUpdateAction, restoreElements, newElementWith, exportToBlob, exportToSvg, serializeAsJSON } from '@excalidraw/excalidraw';
+import { LINE_STYLES, styleLinearElement, linearPathMidpoint } from './linear.mjs';
 import { BoardSync } from './sync.mjs';
 import { safeNativeInput } from './scene.mjs';
+import { recoveryFor } from './recovery.mjs';
+const LINE_LABELS = { straight: '直线', curved: '曲线', polyline: '折线' };
+const editableLine = element => !element.isDeleted && !element.locked && ['line', 'arrow'].includes(element.type);
 const normalizeScene = scene => JSON.parse(JSON.stringify({ ...scene, elements: restoreElements(scene.elements, null, { repairBindings: true }) }));
 
 const LABELS = { loading: '正在加载', saved: '已保存', dirty: '待保存', saving: '保存中', offline: '离线 · 正在重试', conflict: '修改冲突 · 已暂停同步', warning: '备份提醒' };
@@ -12,15 +16,12 @@ function download(blob, name) {
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
-function recoveryFor(sessionId) {
-  const key = `dsh-whiteboard:recovery:${sessionId}`;
-  return { load: () => JSON.parse(localStorage.getItem(key) ?? 'null'), save: value => localStorage.setItem(key, JSON.stringify(value)), clear: () => localStorage.removeItem(key) };
-}
-export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
+export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作白板', rpc, visible = true, signal, navigation = null, registerLeaveGuard, blocked = false }) {
   const [api, setApi] = useState(null);
   const [status, setStatus] = useState({ kind: 'loading', message: '' });
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [lineSelection, setLineSelection] = useState({ count: 0, style: null });
   // A stable portal target preserves the native editor, selection and undo stack.
   // Moving its DOM host escapes sidebar clipping without reparenting the React tree.
   const [surface] = useState(() => document.createElement('div'));
@@ -31,14 +32,36 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
   const [ready, setReady] = useState(false);
   visibleRef.current = visible;
   const onApi = useCallback(value => setApi(value), []);
+  const finishInteraction = useCallback(() => {
+    if (!busyRef.current) return;
+    busyRef.current = false;
+    const sync = syncRef.current;
+    clearTimeout(timerRef.current);
+    // Let native pointer-up/finalization handlers finish before syncing a scene.
+    timerRef.current = setTimeout(() => {
+      if (visibleRef.current && !busyRef.current && syncRef.current === sync) void sync?.tick();
+    }, 0);
+  }, []);
+  useEffect(() => {
+    // Native callbacks are not guaranteed on pointer cancellation or lost focus.
+    window.addEventListener('pointerup', finishInteraction, true);
+    window.addEventListener('pointercancel', finishInteraction, true);
+    window.addEventListener('blur', finishInteraction);
+    return () => {
+      window.removeEventListener('pointerup', finishInteraction, true);
+      window.removeEventListener('pointercancel', finishInteraction, true);
+      window.removeEventListener('blur', finishInteraction);
+    };
+  }, [finishInteraction]);
   useEffect(() => {
     if (!api) return;
     let alive = true;
     setReady(false); setStatus({ kind: 'loading', message: '' });
+    const requests = new AbortController();
     const sync = new BoardSync({
-      read: () => rpc('get', { sessionId }),
-      write: (baseRevision, scene) => rpc('save', { sessionId, baseRevision, scene }),
-      recovery: recoveryFor(sessionId),
+      read: () => rpc('get', { sessionId, boardId }, requests.signal),
+      write: (baseRevision, scene) => rpc('save', { sessionId, boardId, baseRevision, scene }, requests.signal),
+      recovery: recoveryFor(sessionId, boardId),
       normalize: normalizeScene,
       onStatus: (kind, message = '') => { if (alive) setStatus({ kind, message }); },
       onScene: (scene, { initial }) => {
@@ -60,15 +83,15 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
     syncRef.current = sync;
     sync.start().catch(error => { if (alive) setStatus({ kind: 'offline', message: `加载失败：${error.message}` }); });
     const interval = setInterval(() => { if (visibleRef.current && !busyRef.current) void sync.tick(); }, 1000);
-    const closed = () => { clearInterval(interval); sync.dispose(); };
+    const closed = () => { clearInterval(interval); sync.dispose(); requests.abort(); };
     signal?.addEventListener('abort', closed, { once: true });
     if (signal?.aborted) closed();
     return () => {
       alive = false; clearInterval(interval); clearTimeout(timerRef.current);
-      signal?.removeEventListener('abort', closed); sync.dispose();
+      signal?.removeEventListener('abort', closed); sync.dispose(); requests.abort();
       if (syncRef.current === sync) syncRef.current = null;
     };
-  }, [api, sessionId, rpc, signal, retry]);
+  }, [api, sessionId, boardId, rpc, signal, retry]);
   useLayoutEffect(() => {
     const parent = expanded ? document.body : mountRef.current;
     surface.className = `dsh-wb-surface${expanded ? ' dsh-wb-surface--expanded' : ''}`;
@@ -129,6 +152,10 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
   }, []);
   const onChange = useCallback((elements, appState, files) => {
     if (appState.zoom) setZoom(appState.zoom.value);
+    const selectedLines = elements.filter(element => editableLine(element) && appState.selectedElementIds?.[element.id]);
+    const styles = new Set(selectedLines.map(element => element.elbowed ? 'polyline' : element.roundness ? 'curved' : element.points.length > 2 ? 'polyline' : 'straight'));
+    const style = styles.size === 1 ? [...styles][0] : null;
+    setLineSelection(previous => previous.count === selectedLines.length && previous.style === style ? previous : { count: selectedLines.length, style });
     const sync = syncRef.current;
     if (!sync?.base || sync.disposed) return;
     // Image placement is transient until Excalidraw attaches its embedded file.
@@ -147,11 +174,62 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => { if (!busyRef.current) void sync.tick(); }, 550);
   }, [api]);
+  useEffect(() => {
+    if (!registerLeaveGuard) return;
+    const leave = async () => {
+      const sync = syncRef.current;
+      if (signal?.aborted || !visibleRef.current) return false;
+      if (!sync?.base) return true; // Loading canvas is hidden and has no editable draft.
+      const state = api?.getAppState();
+      if (!state || busyRef.current || state.editingTextElement || state.editingLinearElement || state.newElement || state.multiElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged) return false;
+      // Capture synchronous native changes before awaiting any in-flight save.
+      onChange(api.getSceneElementsIncludingDeleted(), state, api.getFiles());
+      clearTimeout(timerRef.current);
+      if (sync.paused) return false;
+      await sync.tick();
+      if (syncRef.current !== sync || sync.disposed || signal?.aborted) return false;
+      if (sync.dirty && !sync.paused) await sync.tick();
+      const latest = api.getAppState();
+      return syncRef.current === sync && !sync.disposed && !signal?.aborted && !busyRef.current && !latest.editingTextElement && !latest.editingLinearElement && !latest.newElement && !latest.multiElement && !sync.dirty && !sync.paused && !sync.uncertainWrite;
+    };
+    return registerLeaveGuard(boardId, leave);
+  }, [api, boardId, onChange, registerLeaveGuard, signal]);
+  function changeLineStyle(lineStyle) {
+    const sync = syncRef.current;
+    if (!api || !sync?.base || sync.disposed || !visibleRef.current || signal?.aborted || busyRef.current || blocked) return;
+    const state = api.getAppState();
+    // Include deleted elements: replacing the native scene must not erase undo tombstones.
+    const elements = api.getSceneElementsIncludingDeleted();
+    const changed = new Map();
+    try {
+      for (const element of elements) {
+        if (editableLine(element) && state.selectedElementIds?.[element.id]) changed.set(element.id, newElementWith(element, styleLinearElement(element, lineStyle)));
+      }
+    } catch (error) {
+      setStatus({ kind: 'warning', message: `暂未转换连线：${error.message}` });
+      return;
+    }
+    if (!changed.size) return;
+    const next = elements.map(element => {
+      if (changed.has(element.id)) return changed.get(element.id);
+      if (!element.isDeleted && element.type === 'text' && changed.has(element.containerId)) {
+        const [x, y] = linearPathMidpoint(changed.get(element.containerId));
+        return newElementWith(element, { x: x - element.width / 2, y: y - element.height / 2 });
+      }
+      return element;
+    });
+    const appState = { ...state, editingLinearElement: null, selectedLinearElement: null };
+    api.updateScene({ elements: next, appState: { editingLinearElement: null, selectedLinearElement: null }, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+    // Capture the edit immediately for source export and crash recovery as well;
+    // native onChange is asynchronous and must not be the only owner of this edit.
+    onChange(next, appState, api.getFiles());
+  }
   async function exportFile(format) {
     try {
       if (!api) return;
       const elements = api.getSceneElements(); const appState = api.getAppState(); const files = api.getFiles();
-      const name = `whiteboard-${sessionId.slice(0, 12)}`;
+      const label = boardName.replace(/[^\p{L}\p{N}_-]/gu, '-').slice(0, 50) || 'whiteboard';
+      const name = `${label}-${boardId.slice(0, 12)}-${sessionId.slice(0, 12)}`;
       if (format === 'excalidraw') {
         const local = syncRef.current?.local;
         download(new Blob([serializeAsJSON(local?.elements ?? elements, appState, local?.files ?? files, 'local')], { type: 'application/json' }), `${name}.excalidraw`);
@@ -171,18 +249,22 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
   }
   return <><div className="dsh-wb-mount" ref={mountRef} />{createPortal(<section className="dsh-whiteboard" aria-label="AI 协作白板" onKeyDownCapture={onKeyDownCapture} onKeyDown={event => event.stopPropagation()}>
     <header className="dsh-wb-header">
-      <strong>✎ 协作白板</strong>
+      <strong title={boardName}>✎ {boardName}</strong>
       <span className={`dsh-wb-status dsh-wb-status--${status.kind}`} role="status" title={status.message}>{LABELS[status.kind] ?? status.kind}</span>
       <button ref={expandRef} className="dsh-wb-expand" onClick={() => setFullscreen(f => !f)} aria-label={expanded ? '返回侧栏' : '大屏编辑'} aria-expanded={expanded} title={expanded ? '返回侧栏（Esc）' : '在页面大屏中编辑，不丢失当前视图和撤销历史'}>{expanded ? '↙ 返回侧栏' : '⤢ 大屏编辑'}</button>
     </header>
+    {navigation}
     <div className="dsh-wb-actions">
       <div className="dsh-wb-zoom" role="group" aria-label="画布缩放">
         <button disabled={!ready || zoom <= MIN_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value / 1.25)} aria-label="缩小画布" title="缩小画布">−</button>
         <button disabled={!ready} onClick={() => changeZoom(1)} aria-label="重置缩放为 100%" title="点击恢复 100%">{Math.round(zoom * 100)}%</button>
         <button disabled={!ready || zoom >= MAX_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value * 1.25)} aria-label="放大画布" title="放大画布">＋</button>
       </div>
+      <div className="dsh-wb-lines" role="group" aria-label="选中连线走线" title={lineSelection.count ? `修改 ${lineSelection.count} 条未锁定的连线` : '先用选择工具选中线条或箭头'}>
+        <span>连线</span>{LINE_STYLES.map(lineStyle => <button key={lineStyle} disabled={!ready || !lineSelection.count || !visible || signal?.aborted || blocked} aria-label={`连线：${LINE_LABELS[lineStyle]}`} aria-pressed={lineSelection.style === lineStyle} onClick={() => changeLineStyle(lineStyle)}>{LINE_LABELS[lineStyle]}</button>)}
+      </div>
       <button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应</button>
-      <button disabled={!ready} onClick={() => syncRef.current?.tick()}>保存</button>
+      <button disabled={!ready || blocked} onClick={() => syncRef.current?.tick()}>保存</button>
       <details className="dsh-wb-export"><summary>导出 ▾</summary><div>
         <button disabled={!ready} onClick={() => exportFile('png')}>PNG</button>
         <button disabled={!ready} onClick={() => exportFile('svg')}>SVG</button>
@@ -193,12 +275,12 @@ export function Whiteboard({ sessionId, rpc, visible = true, signal }) {
       {status.kind === 'conflict' && <button onClick={reloadRemote}>加载服务器版本</button>}
       {!ready && status.kind === 'offline' && <button onClick={() => setRetry(n => n + 1)}>重新加载</button>}
     </div>}
-    <div className="dsh-wb-canvas" style={{ visibility: ready ? 'visible' : 'hidden' }}>
-      <Excalidraw excalidrawAPI={onApi} onChange={onChange} langCode="zh-CN" name="DSH 协作白板"
+    <div className="dsh-wb-canvas" inert={blocked ? '' : undefined} aria-busy={blocked || undefined} style={{ visibility: ready ? 'visible' : 'hidden' }}>
+      <Excalidraw excalidrawAPI={onApi} onChange={onChange} langCode="zh-CN" name={boardName}
         handleKeyboardGlobally={false} autoFocus={false} aiEnabled={false} validateEmbeddable={false}
         onLinkOpen={(_element, event) => event.preventDefault()}
         onPointerDown={() => { busyRef.current = true; }}
-        onPointerUp={() => { busyRef.current = false; void syncRef.current?.tick(); }}
+        onPointerUp={finishInteraction}
         UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false, saveToActiveFile: false } }}>
         <MainMenu><MainMenu.DefaultItems.ClearCanvas /><MainMenu.DefaultItems.ToggleTheme /></MainMenu>
       </Excalidraw>

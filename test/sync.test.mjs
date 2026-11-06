@@ -93,6 +93,34 @@ test('concurrent frame deletion versus child placement conflicts instead of savi
   const frame = { ...element('f'), type: 'frame' }, child = element('c');
   assert.throws(() => mergeScenes(scene(frame, child), scene(frame, { ...child, frameId: 'f' }), scene({ ...frame, isDeleted: true }, child)), /binding:c:f/);
 });
+test('reopening recovers edits made after a committed save lost its acknowledgement', async () => {
+  let current = board(0, scene(element('a')));
+  const recovery = { load() { return this.saved; }, save(value) { this.saved = structuredClone(value); }, clear() { this.saved = null; } };
+  const sync = new BoardSync({ read: async () => current, write: async (revision, value) => { current = board(revision + 1, value); throw new Error('lost acknowledgement'); }, recovery, onScene() {} });
+  await sync.start(); sync.observe(scene(element('a', 10))); await sync.tick();
+  sync.observe(scene(element('a', 20))); sync.dispose();
+  assert.equal(recovery.saved.uncertainWrite.scene.elements[0].x, 10);
+  const reopened = new BoardSync({ read: async () => current, write: async (revision, value) => current = board(revision + 1, value), recovery, onScene() {} });
+  await reopened.start();
+  assert.equal(reopened.paused, false);
+  assert.equal(reopened.local.elements[0].x, 20);
+  await reopened.tick();
+  assert.equal(current.revision, 2); assert.equal(current.elements[0].x, 20);
+  assert.equal(recovery.saved, null);
+});
+
+test('uncertain save recovery does not disguise genuinely conflicting remote edits', async () => {
+  let current = board(0, scene(element('a')));
+  const sync = new BoardSync({ read: async () => current, write: async (revision, value) => { current = board(revision + 1, value); throw new Error('lost acknowledgement'); }, onScene() {} });
+  await sync.start(); sync.observe(scene(element('a', 10))); await sync.tick();
+  sync.observe(scene(element('a', 20)));
+  current = board(2, scene(element('a', 30))); // another editor changed the same object
+  await sync.tick();
+  assert.equal(sync.paused, true);
+  assert.equal(sync.local.elements[0].x, 20);
+  assert.equal(current.elements[0].x, 30);
+});
+
 test('failed network save retains local scene and retries on next tick', async () => {
   let fail = true; let current = board(0, scene(element('a')));
   const sync = new BoardSync({ read: async () => current, write: async (revision, value) => { if (fail) throw new Error('offline'); return current = board(revision + 1, value); }, onScene() {} });

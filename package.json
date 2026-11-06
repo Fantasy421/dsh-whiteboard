@@ -1,6 +1,6 @@
 {
   "name": "dsh-whiteboard",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Human + AI Excalidraw whiteboard in the DeepSeek Harness sidebar",
   "type": "module",
   "license": "MIT",

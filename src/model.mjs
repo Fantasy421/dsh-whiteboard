@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto';
+import { LINE_STYLES, linearPathMidpoint, linearWorldPoints, styleLinearElement } from './linear.mjs';
 
 export const MAX_SCENE_BYTES = 8 * 1024 * 1024;
 export const MAX_ELEMENTS = 2000;
@@ -7,7 +8,7 @@ const OP_TYPES = new Set(['rectangle', 'diamond', 'ellipse', 'text', 'arrow', 'l
 const CONTAINERS = new Set(['rectangle', 'diamond', 'ellipse', 'arrow']);
 const BINDABLE = new Set(['rectangle', 'diamond', 'ellipse', 'text', 'image', 'frame']);
 const POISON = new Set(['__proto__', 'prototype', 'constructor']);
-const OP_KEYS = new Set(['op', 'id', 'type', 'x', 'y', 'width', 'height', 'text', 'strokeColor', 'backgroundColor', 'fontSize', 'startId', 'endId', 'points']);
+const OP_KEYS = new Set(['op', 'id', 'type', 'x', 'y', 'width', 'height', 'text', 'strokeColor', 'backgroundColor', 'fontSize', 'startId', 'endId', 'points', 'lineStyle']);
 const NUMERIC = ['x', 'y', 'width', 'height', 'angle', 'strokeWidth', 'roughness', 'opacity', 'seed', 'version', 'versionNonce', 'updated', 'fontSize', 'fontFamily', 'lineHeight'];
 
 function invalid(message) {
@@ -275,10 +276,9 @@ function layoutLabel(container, label) {
   label.width = Math.min(metrics.width, maxWidth);
   label.height = metrics.height;
   if (container.type === 'arrow') {
-    const first = container.points[0];
-    const last = container.points.at(-1);
-    label.x = container.x + (first[0] + last[0]) / 2 - label.width / 2;
-    label.y = container.y + (first[1] + last[1]) / 2 - label.height / 2;
+    const [x, y] = linearPathMidpoint(container);
+    label.x = x - label.width / 2;
+    label.y = y - label.height / 2;
   } else {
     label.x = container.x + (container.width - label.width) / 2;
     label.y = container.y + (container.height - label.height) / 2;
@@ -332,18 +332,23 @@ function edgePoint(element, toward, gap = 8) {
   return [cx + dx * scale + dx / distance * gap, cy + dy * scale + dy / distance * gap];
 }
 function updateArrow(arrow, byId) {
-  const first = arrow.points[0], last = arrow.points.at(-1);
-  let start = [arrow.x + first[0], arrow.y + first[1]];
-  let end = [arrow.x + last[0], arrow.y + last[1]];
   const startNode = byId.get(arrow.startBinding?.elementId);
   const endNode = byId.get(arrow.endBinding?.elementId);
+  if (!startNode && !endNode) return;
+  const world = linearWorldPoints(arrow);
+  let start = world[0], end = world.at(-1);
   if (startNode) start = edgePoint(startNode, endNode ? center(endNode) : end, arrow.startBinding.gap ?? 8);
   if (endNode) end = edgePoint(endNode, startNode ? center(startNode) : start, arrow.endBinding.gap ?? 8);
-  if (!startNode && !endNode) return;
-  const middle = arrow.points.slice(1, -1).map(([x, y]) => [arrow.x + x - start[0], arrow.y + y - start[1]]);
+  const shiftX = arrow.x - start[0], shiftY = arrow.y - start[1];
+  // Rebinding normalizes rotation, retaining each interior control in world space.
+  // For angle 0, apply a relative shift to avoid floating-point drift on no-ops.
+  const middle = arrow.angle
+    ? world.slice(1, -1).map(([x, y]) => [x - start[0], y - start[1]])
+    : arrow.points.slice(1, -1).map(([x, y]) => [x + shiftX, y + shiftY]);
   const nextPoints = [[0, 0], ...middle, [end[0] - start[0], end[1] - start[1]]];
   const xs = nextPoints.map((point) => point[0]), ys = nextPoints.map((point) => point[1]);
-  if (arrow.x !== start[0] || arrow.y !== start[1] || JSON.stringify(arrow.points) !== JSON.stringify(nextPoints)) {
+  if (arrow.angle || arrow.x !== start[0] || arrow.y !== start[1] || JSON.stringify(arrow.points) !== JSON.stringify(nextPoints)) {
+    if (arrow.angle) arrow.angle = 0;
     arrow.x = start[0]; arrow.y = start[1]; arrow.points = nextPoints;
     arrow.width = Math.max(...xs) - Math.min(...xs); arrow.height = Math.max(...ys) - Math.min(...ys);
     bump(arrow);
@@ -368,6 +373,10 @@ function validateOperation(operation) {
   for (const key of ['strokeColor', 'backgroundColor']) if (operation[key] !== undefined) color(operation[key], key);
   for (const key of ['startId', 'endId']) if (operation[key] !== undefined) id(operation[key], key);
   if (operation.points !== undefined) points(operation.points, 'points');
+  if (operation.lineStyle !== undefined) {
+    if (!LINE_STYLES.includes(operation.lineStyle)) invalid('lineStyle must be straight, curved or polyline');
+    if (operation.type !== undefined && !['arrow', 'line'].includes(operation.type)) invalid('Only arrows and lines accept lineStyle');
+  }
   if (operation.op === 'delete' && Object.keys(operation).some((key) => !['op', 'id'].includes(key))) invalid('Delete only accepts op and id');
 }
 
@@ -451,6 +460,7 @@ export function applyOperations(board, operations) {
     }
     if ((operation.startId !== undefined || operation.endId !== undefined) && element.type !== 'arrow') invalid('Only arrows accept startId/endId');
     if (operation.points !== undefined && !['arrow', 'line'].includes(element.type)) invalid('Only arrows and lines accept points');
+    if (operation.lineStyle !== undefined && !['arrow', 'line'].includes(element.type)) invalid('Only arrows and lines accept lineStyle');
     for (const key of ['x', 'y', 'width', 'height', 'strokeColor', 'backgroundColor']) if (operation[key] !== undefined) element[key] = operation[key];
     if (element.type === 'text') {
       element.originalText ??= element.text ?? '';
@@ -473,6 +483,16 @@ export function applyOperations(board, operations) {
       if (element.type === 'arrow') {
         setBinding(element, 'start', operation.startId, byId);
         setBinding(element, 'end', operation.endId, byId);
+      }
+      if (operation.lineStyle !== undefined) {
+        // Generate from attached endpoints, not the placeholder [0,0]→[200,0].
+        // Later node operations retain these manual controls, as native edits do.
+        if (element.type === 'arrow') updateArrow(element, byId);
+        try { Object.assign(element, styleLinearElement(element, operation.lineStyle)); }
+        catch (error) {
+          if (error instanceof RangeError) invalid(error.message);
+          throw error;
+        }
       }
     }
     if (operation.op === 'update') bump(element);

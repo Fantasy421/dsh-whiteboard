@@ -7,7 +7,7 @@ import React from 'react';
 import { create, act } from 'react-test-renderer';
 
 // Component lifecycle tests with a native-editor stub, not a browser/layout test.
-test('sidebar expansion and zoom keep one editor and one sync session', async () => {
+test('sidebar view and selected-line controls retain editor, history and sync ownership', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const output = join(root, 'node_modules', `.whiteboard-ui-${process.pid}.mjs`);
   const { writeFile, unlink } = await import('node:fs/promises');
@@ -27,17 +27,30 @@ test('sidebar expansion and zoom keep one editor and one sync session', async ()
   globalThis.cancelAnimationFrame = clearTimeout;
   const state = { zoom: { value: 1 }, width: 400, height: 600, scrollX: 20, scrollY: -30, selectedElementIds: {} };
   let mounts = 0, unmounts = 0, reads = 0, saves = 0, refreshes = 0, historyClears = 0;
-  const api = { getAppState: () => state, getSceneElements: () => [], getFiles: () => ({}), addFiles() {}, history: { clear() { historyClears++; } }, refresh() { refreshes++; }, scrollToContent() {}, updateScene(change) { Object.assign(state, change.appState); } };
+  let nativeElements = [];
+  const changes = [];
+  const api = { getAppState: () => state, getSceneElements: () => nativeElements.filter(e => !e.isDeleted), getSceneElementsIncludingDeleted: () => nativeElements, getFiles: () => ({}), addFiles() {}, history: { clear() { historyClears++; } }, refresh() { refreshes++; }, scrollToContent() {}, updateScene(change) { changes.push(change); if (change.elements) nativeElements = change.elements; Object.assign(state, change.appState); } };
   globalThis.__wbUi = { api, mount: () => mounts++, unmount: () => unmounts++ };
   let renderer;
   try {
     const result = await build({ entryPoints: [join(root, 'src/Whiteboard.jsx')], bundle: true, write: false, format: 'esm', platform: 'node', external: ['react'], plugins: [{ name: 'native-ui-stubs', setup(build) {
       build.onResolve({ filter: /^(@excalidraw\/excalidraw|react-dom)$/ }, args => ({ path: args.path, namespace: 'ui-stub' }));
-      build.onLoad({ filter: /.*/, namespace: 'ui-stub' }, args => ({ loader: 'js', contents: args.path === 'react-dom' ? `import React from 'react'; export const createPortal = (children, container) => React.createElement('portal', {container}, children);` : `import React from 'react'; export function Excalidraw(props) { React.useEffect(() => { globalThis.__wbUi.mount(); props.excalidrawAPI(globalThis.__wbUi.api); return () => globalThis.__wbUi.unmount(); }, []); return React.createElement('native-editor', props); } export function MainMenu({children}) {return children;} MainMenu.DefaultItems = {ClearCanvas: () => null, ToggleTheme: () => null}; export const CaptureUpdateAction = {NEVER:'NEVER',IMMEDIATELY:'IMMEDIATELY'}; export const restoreElements = elements => elements; export const exportToBlob = () => null; export const exportToSvg = () => null; export const serializeAsJSON = () => '';` }));
+      build.onLoad({ filter: /.*/, namespace: 'ui-stub' }, args => ({ loader: 'js', contents: args.path === 'react-dom' ? `import React from 'react'; export const createPortal = (children, container) => React.createElement('portal', {container}, children);` : `import React from 'react'; export function Excalidraw(props) { React.useEffect(() => { globalThis.__wbUi.mount(); props.excalidrawAPI(globalThis.__wbUi.api); return () => globalThis.__wbUi.unmount(); }, []); return React.createElement('native-editor', props); } export function MainMenu({children}) {return children;} MainMenu.DefaultItems = {ClearCanvas: () => null, ToggleTheme: () => null}; export const CaptureUpdateAction = {NEVER:'NEVER',IMMEDIATELY:'IMMEDIATELY'}; export const newElementWith = (element,updates) => ({...element,...updates,version:(element.version??0)+1,versionNonce:(element.versionNonce??0)+1,updated:Date.now()}); export const restoreElements = elements => elements; export const exportToBlob = () => null; export const exportToSvg = () => null; export const serializeAsJSON = () => '';` }));
     } }] });
     await writeFile(output, result.outputFiles[0].text);
     const { Whiteboard } = await import(pathToFileURL(output).href);
-    const rpc = async method => { if (method === 'save') saves++; else reads++; return { sessionId: 'ui-session', revision: 0, elements: [], files: {}, selectedIds: [] }; };
+    const requestSignals = [];
+    const scenes = new Map();
+    let rejectWrites = false;
+    const rpcCalls = [];
+    const rpc = async (method, payload, signal) => {
+      rpcCalls.push({ method, ...payload }); requestSignals.push(signal);
+      const key = JSON.stringify([payload.sessionId, payload.boardId]);
+      let board = scenes.get(key) ?? { sessionId: payload.sessionId, boardId: payload.boardId, revision: 0, elements: [], files: {}, selectedIds: [] };
+      if (method === 'save') { saves++; if (rejectWrites) throw new Error('offline'); board = { ...board, ...structuredClone(payload.scene), revision: board.revision + 1 }; scenes.set(key, board); }
+      else reads++;
+      return structuredClone(board);
+    };
     const controller = new AbortController();
     const props = { sessionId: 'ui-session', rpc, visible: true, signal: controller.signal };
     await act(async () => { renderer = create(React.createElement(Whiteboard, props), { createNodeMock: () => new Node() }); });
@@ -91,7 +104,10 @@ test('sidebar expansion and zoom keep one editor and one sync session', async ()
     assert.equal(portal.parentNode, inlineParent, 'hidden session must never leave a fullscreen overlay');
     await act(async () => renderer.update(React.createElement(Whiteboard, props)));
     await act(async () => button('大屏编辑').props.onClick());
+    const initialRequestSignal = requestSignals[0];
+    assert.equal(initialRequestSignal.aborted, false);
     await act(async () => controller.abort());
+    assert.equal(initialRequestSignal.aborted, true, 'closing an occurrence must cancel its owned network requests');
     assert.equal(portal.parentNode, inlineParent, 'closed occurrence must release its overlay');
     assert.ok(refreshes > 0);
     await act(async () => renderer.update(React.createElement(Whiteboard, { ...props, key: 'second', sessionId: 'second', signal: new AbortController().signal })));
@@ -100,6 +116,110 @@ test('sidebar expansion and zoom keep one editor and one sync session', async ()
     assert.equal(portal.parentNode, null, 'switching sessions removes the previous portal host');
     assert.equal(mounts, 2);
     assert.equal(unmounts, 1);
+    // Browser cancellation/blur need not call the native onPointerUp callback.
+    // They must nevertheless release the poll gate without closing this editor.
+    const editor = () => renderer.root.findByType('native-editor');
+    await act(async () => editor().props.onPointerDown());
+    await act(async () => { window.dispatchEvent(new Event('pointercancel')); await new Promise(resolve => setTimeout(resolve, 5)); });
+    const beforeRecovery = reads;
+    await act(async () => editor().props.onChange([], state, {}));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 575)); });
+    assert.ok(reads > beforeRecovery, 'cancelled pointer must not permanently disable automatic refresh');
+    await act(async () => editor().props.onPointerDown());
+    const beforeBlur = reads;
+    await act(async () => { window.dispatchEvent(new Event('blur')); await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.ok(reads > beforeBlur, 'lost window focus must release the interaction gate');
+    await act(async () => {
+      editor().props.onPointerDown();
+      window.dispatchEvent(new Event('pointercancel'));
+      editor().props.onPointerDown();
+    });
+    const beforeNextDrag = reads;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.equal(reads, beforeNextDrag, 'deferred recovery must not sync in the middle of a new pointer interaction');
+    await act(async () => { editor().props.onPointerUp(); await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.ok(reads > beforeNextDrag);
+    assert.equal(mounts, 2, 'recovering polling must not recreate the editor');
+    assert.ok(button('连线：曲线'), 'selected lines need an explicit editable curve control');
+    assert.ok(button('连线：折线'));
+    assert.equal(button('连线：曲线').props.disabled, true, 'no selection must not alter the whole diagram');
+    const line = { id: 'route', type: 'arrow', x: 20, y: 30, width: 200, height: 0, angle: 0, points: [[0, 0], [200, 0]], version: 1, versionNonce: 1, isDeleted: false, roundness: null, startBinding: null, endBinding: null };
+    const label = { id: 'route-label', type: 'text', x: 100, y: 20, width: 40, height: 20, text: '连接', containerId: 'route', version: 1, isDeleted: false };
+    line.boundElements = [{ id: label.id, type: 'text' }];
+    const node = { id: 'unchanged', type: 'rectangle', x: 300, y: 30, width: 100, height: 80, version: 1, isDeleted: false, locked: false };
+    const deleted = { ...node, id: 'tombstone', isDeleted: true };
+    const plain = { ...line, id: 'plain', type: 'line', x: 50, y: 300, boundElements: null };
+    const unselected = { ...plain, id: 'unselected' };
+    const locked = { ...line, id: 'locked', locked: true, boundElements: null };
+    nativeElements = [line, label, node, deleted, plain, unselected, locked];
+    const selectedIds = { route: true, unchanged: true, plain: true, locked: true };
+    state.selectedElementIds = { ...selectedIds };
+    await act(async () => editor().props.onChange(nativeElements, state, {}));
+    assert.equal(button('连线：曲线').props.disabled, false);
+    const clearsBeforeRouting = historyClears;
+    await act(async () => button('连线：曲线').props.onClick());
+    let route = nativeElements.find(e => e.id === line.id);
+    assert.equal(route.roundness.type, 2);
+    assert.ok(route.points.length >= 3);
+    assert.ok(route.version > line.version, 'route changes must bump native element version');
+    assert.equal(changes.at(-1).captureUpdate, 'IMMEDIATELY', 'line conversion is an undoable drawing edit, not a view operation');
+    assert.deepEqual(nativeElements.find(e => e.id === node.id), node);
+    assert.deepEqual(nativeElements.find(e => e.id === deleted.id), deleted, 'native tombstones must not be dropped');
+    assert.deepEqual(state.selectedElementIds, selectedIds);
+    assert.equal(nativeElements.find(e => e.id === plain.id).roundness.type, 2, 'batch conversion also handles selected ordinary lines');
+    assert.deepEqual(nativeElements.find(e => e.id === unselected.id), unselected);
+    assert.deepEqual(nativeElements.find(e => e.id === locked.id), locked);
+    assert.ok(nativeElements.find(e => e.id === label.id).y !== label.y, 'bound labels follow the new path');
+    await act(async () => button('连线：折线').props.onClick());
+    route = nativeElements.find(e => e.id === line.id);
+    assert.equal(route.roundness, null);
+    assert.ok(route.points.length >= 3);
+    await act(async () => button('连线：直线').props.onClick());
+    route = nativeElements.find(e => e.id === line.id);
+    assert.equal(route.points.length, 2);
+    assert.deepEqual(route.points, line.points);
+    assert.equal(historyClears, clearsBeforeRouting, 'routing must not clear native undo history');
+    // Native mutation/onChange is async. The conversion must already be captured
+    // for export/recovery, not wait for that callback to save the current drawing.
+    let recovered = null;
+    const originalSetItem = localStorage.setItem;
+    localStorage.setItem = (_key, value) => { recovered = JSON.parse(value); };
+    await act(async () => button('连线：曲线').props.onClick());
+    assert.equal(recovered?.local.elements.find(e => e.id === line.id).roundness.type, 2);
+    localStorage.setItem = originalSetItem;
+    nativeElements = nativeElements.map(e => e.id === line.id ? { ...e, locked: true } : e);
+    state.selectedElementIds = { route: true };
+    await act(async () => editor().props.onChange(nativeElements, state, {}));
+    assert.equal(button('连线：折线').props.disabled, true, 'locked lines must not be modified by the convenience controls');
+    const guards = new Map();
+    const registerLeaveGuard = (id, guard) => { guards.set(id, guard); return () => guards.delete(id); };
+    const guardProps = { ...props, sessionId: 'guard-session', boardId: 'board-a', boardName: 'Architecture', blocked: true, navigation: React.createElement('navigation-test'), registerLeaveGuard, signal: new AbortController().signal };
+    await act(async () => renderer.update(React.createElement(Whiteboard, { ...guardProps, key: 'board-a' })));
+    assert.ok(renderer.root.findByType('navigation-test'), 'navigation belongs inside the movable editor surface');
+    assert.equal(renderer.root.findByProps({ className: 'dsh-wb-canvas' }).props.inert, '', 'catalog transitions must freeze native canvas input');
+    assert.equal(rpcCalls.at(-1).boardId, 'board-a');
+    nativeElements = [{ ...node, x: 55 }];
+    state.selectedElementIds = {};
+    await act(async () => editor().props.onChange(nativeElements, state, {}));
+    rejectWrites = true;
+    let allowed;
+    await act(async () => { allowed = await guards.get('board-a')(); });
+    assert.equal(allowed, false, 'an unsaved/offline draft must block board navigation');
+    rejectWrites = false;
+    await act(async () => { allowed = await guards.get('board-a')(); });
+    assert.equal(allowed, true, 'a captured draft can leave only after successful save/reconciliation');
+    assert.equal(scenes.get(JSON.stringify(['guard-session', 'board-a'])).elements[0].x, 55);
+    state.editingTextElement = { id: 'typing' };
+    await act(async () => { allowed = await guards.get('board-a')(); });
+    assert.equal(allowed, false, 'editing text must finish before switching boards');
+    state.editingTextElement = null;
+    const clearsBeforeBoardSwitch = historyClears;
+    await act(async () => renderer.update(React.createElement(Whiteboard, { ...guardProps, key: 'board-b', boardId: 'board-b' })));
+    assert.equal(guards.has('board-a'), false);
+    assert.ok(guards.has('board-b'));
+    assert.deepEqual(nativeElements, [], 'another board must not receive the previous native scene');
+    assert.ok(historyClears > clearsBeforeBoardSwitch, 'each board occurrence starts a separate native undo history');
+    assert.equal(rpcCalls.at(-1).boardId, 'board-b');
     const alreadyClosed = new AbortController(); alreadyClosed.abort();
     await act(async () => renderer.update(React.createElement(Whiteboard, { ...props, key: 'closed', signal: alreadyClosed.signal })));
     await act(async () => button('大屏编辑').props.onClick());

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOperations, emptyBoard, MAX_SCENE_BYTES, validateScene } from '../src/model.mjs';
+import { applyOperations, emptyBoard, MAX_SCENE_BYTES, validateOperations, validateScene } from '../src/model.mjs';
+import { LINE_STYLES, linearPathMidpoint, linearWorldPoints, styleLinearElement } from '../src/linear.mjs';
 
 const shape = (id, extra = {}) => ({ id, type: 'rectangle', x: 0, y: 0, width: 180, height: 100, ...extra });
 const scene = (elements = [], files = {}, selectedIds = []) => ({ elements, files, selectedIds });
@@ -222,6 +223,172 @@ test('minimal validated native text can be moved without requiring optional font
   assert.equal(find(after, 't').x, 50);
   assert.equal(find(after, 't').text, 'Native text');
   assert.equal(find(after, 't').fontSize, 20);
+});
+
+test('AI add and update styles persist as editable native lines and arrows', () => {
+  for (const type of ['line', 'arrow']) for (const lineStyle of LINE_STYLES) {
+    const board = applyOperations(emptyBoard('style'), [{ op: 'add', id: 'edge', type, x: -40, y: -20, width: 180, height: 80, lineStyle }]);
+    const edge = find(board, 'edge');
+    assert.deepEqual(edge.points[0], [0, 0]);
+    assert.deepEqual(edge.points.at(-1), [180, 80]);
+    assert.deepEqual(edge.roundness, lineStyle === 'curved' ? { type: 2 } : null);
+    if (type === 'arrow') assert.equal(edge.elbowed, false);
+    assert.equal(edge.type, type);
+    assert.deepEqual(validateScene(JSON.parse(JSON.stringify(board))).elements, board.elements);
+    const changed = applyOperations(board, [{ op: 'update', id: 'edge', lineStyle: 'straight' }]);
+    assert.deepEqual(find(changed, 'edge').points, [[0, 0], [180, 80]]);
+    assert.ok(find(changed, 'edge').version > edge.version);
+  }
+});
+
+test('explicit negative relative coordinates and manual multi-waypoints survive curved/polyline styles', () => {
+  const points = [[-30, 20], [-120, -60], [80, 140], [160, -20]];
+  for (const type of ['line', 'arrow']) for (const lineStyle of ['curved', 'polyline']) {
+    const board = applyOperations(emptyBoard('style'), [{ op: 'add', id: 'edge', type, x: -100, y: 60, points, lineStyle }]);
+    const edge = find(board, 'edge');
+    assert.equal(edge.x, -100); assert.equal(edge.y, 60);
+    assert.deepEqual(edge.points, points);
+    assert.equal(edge.width, 280); assert.equal(edge.height, 200);
+    const updated = applyOperations(board, [{ op: 'update', id: 'edge', lineStyle: lineStyle === 'curved' ? 'polyline' : 'curved' }]);
+    assert.deepEqual(find(updated, 'edge').points, points);
+    const straight = applyOperations(updated, [{ op: 'update', id: 'edge', lineStyle: 'straight' }]);
+    assert.deepEqual(find(straight, 'edge').points, [points[0], points.at(-1)]);
+  }
+});
+
+test('omitting lineStyle preserves existing default geometry and does not restyle nodes', () => {
+  const points = [[0, 0], [-20, 70], [200, 10]];
+  const board = applyOperations(emptyBoard('style'), [
+    { op: 'add', id: 'edge', type: 'line', points },
+    { op: 'add', id: 'node', type: 'rectangle', text: 'Node' },
+  ]);
+  assert.deepEqual(find(board, 'edge').points, points);
+  assert.equal(find(board, 'edge').roundness, null);
+  const styled = applyOperations(board, [{ op: 'update', id: 'edge', lineStyle: 'curved' }]);
+  assert.deepEqual(find(styled, 'node'), find(board, 'node'));
+  const moved = applyOperations(styled, [{ op: 'update', id: 'edge', x: 100, strokeColor: '#f00' }]);
+  assert.deepEqual(find(moved, 'edge').points, points);
+  assert.deepEqual(find(moved, 'edge').roundness, { type: 2 });
+  const replaced = applyOperations(moved, [{ op: 'update', id: 'edge', points: [[10, 5], [-40, 80]] }]);
+  assert.deepEqual(find(replaced, 'edge').points, [[10, 5], [-40, 80]]);
+  assert.deepEqual(find(replaced, 'edge').roundness, { type: 2 });
+});
+
+test('styles respect sequential batch semantics and generate only after binding endpoints', () => {
+  const board = applyOperations(emptyBoard('style'), [
+    { op: 'add', id: 'a', type: 'rectangle', x: 10, y: 20 },
+    { op: 'add', id: 'b', type: 'rectangle', x: 500, y: 200 },
+    { op: 'add', id: 'edge', type: 'arrow', startId: 'a', endId: 'b', lineStyle: 'curved' },
+  ]);
+  const defaultEdge = find(applyOperations(emptyBoard('style'), [
+    { op: 'add', id: 'a', type: 'rectangle', x: 10, y: 20 },
+    { op: 'add', id: 'b', type: 'rectangle', x: 500, y: 200 },
+    { op: 'add', id: 'edge', type: 'arrow', startId: 'a', endId: 'b' },
+  ]), 'edge');
+  assert.deepEqual(find(board, 'edge').points, styleLinearElement(defaultEdge, 'curved').points);
+  const points = [[0, 0], [10, -50], [100, 100]];
+  const sequential = applyOperations(emptyBoard('style'), [
+    { op: 'add', id: 'edge', type: 'line', points, lineStyle: 'straight' },
+    { op: 'update', id: 'edge', points },
+  ]);
+  assert.deepEqual(find(sequential, 'edge').points, points);
+  assert.equal(find(sequential, 'edge').roundness, null);
+});
+
+test('lineStyle validation rejects null, unsupported styles, nodes and deletion atomically', () => {
+  const board = diagram(), before = structuredClone(board);
+  for (const lineStyle of [null, true, 1, [], {}, 'elbow', 'Curved']) {
+    rejected(() => validateOperations([{ op: 'update', id: 'edge', lineStyle }]));
+    rejected(() => applyOperations(board, [{ op: 'update', id: 'edge', lineStyle }]));
+  }
+  for (const type of ['rectangle', 'ellipse', 'diamond', 'text']) rejected(() => applyOperations(board, [{ op: 'add', id: 'new', type, lineStyle: 'curved' }]));
+  rejected(() => applyOperations(board, [{ op: 'update', id: 'a', lineStyle: 'polyline' }]));
+  rejected(() => validateOperations([{ op: 'delete', id: 'edge', lineStyle: 'straight' }]));
+  rejected(() => applyOperations(board, [{ op: 'update', id: 'edge', lineStyle: 'curved', points: null }]));
+  rejected(() => applyOperations(board, [{ op: 'update', id: 'edge', lineStyle: 'curved' }, { op: 'update', id: 'a', lineStyle: 'polyline' }]));
+  assert.deepEqual(board, before);
+});
+
+test('bound curved and polyline arrows preserve manual controls and labels when nodes move or delete', () => {
+  for (const lineStyle of ['curved', 'polyline']) {
+    const board = applyOperations(diagram(), [{ op: 'update', id: 'edge', lineStyle }]);
+    const before = find(board, 'edge');
+    const absoluteControls = before.points.slice(1, -1).map(([x, y]) => [before.x + x, before.y + y]);
+    const moved = applyOperations(board, [{ op: 'update', id: 'a', x: -100, y: 200 }, { op: 'update', id: 'b', x: 600, y: -50 }]);
+    const arrow = find(moved, 'edge'), label = find(moved, 'edge__label');
+    assert.deepEqual(arrow.points.slice(1, -1).map(([x, y]) => [arrow.x + x, arrow.y + y]), absoluteControls);
+    assert.notDeepEqual([arrow.x, arrow.y], [before.x, before.y]);
+    assert.deepEqual(arrow.roundness, before.roundness);
+    assert.equal(arrow.startBinding.elementId, 'a'); assert.equal(arrow.endBinding.elementId, 'b');
+    assert.equal(arrow.elbowed, false);
+    const [x, y] = linearPathMidpoint(arrow);
+    assert.equal(label.x + label.width / 2, x); assert.equal(label.y + label.height / 2, y);
+    assert.doesNotThrow(() => validateScene(moved));
+    const deleted = applyOperations(moved, [{ op: 'delete', id: 'a' }]);
+    assert.equal(find(deleted, 'edge').isDeleted, true); assert.equal(find(deleted, 'edge__label').isDeleted, true);
+    assert.equal(find(deleted, 'edge').startBinding, null); assert.equal(find(deleted, 'edge').endBinding, null);
+    assert.doesNotThrow(() => validateScene(deleted));
+  }
+});
+
+test('binding a styled arrow or restyling after node movement keeps coherent bound endpoints', () => {
+  for (const lineStyle of ['straight', 'curved', 'polyline']) {
+    const board = applyOperations(diagram(), [
+      { op: 'update', id: 'a', x: -100, y: 200 },
+      { op: 'update', id: 'edge', points: [[0, 0], [100, 0]], lineStyle },
+    ]);
+    const arrow = find(board, 'edge');
+    assert.equal(arrow.startBinding.elementId, 'a'); assert.equal(arrow.endBinding.elementId, 'b');
+    assert.ok(arrow.x > -100 && arrow.x < 400);
+    assert.notDeepEqual(arrow.points.at(-1), [100, 0]);
+    assert.equal(arrow.points.length >= 3, lineStyle !== 'straight');
+    assert.deepEqual(arrow.roundness, lineStyle === 'curved' ? { type: 2 } : null);
+  }
+});
+
+test('restyling a rotated bound native arrow preserves world endpoints and controls before node movement', () => {
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-7, `${a} ≈ ${b}`);
+  for (const sourceStyle of ['polyline', 'curved']) for (const lineStyle of LINE_STYLES) {
+    const board = diagram(), arrow = find(board, 'edge');
+    const world = linearWorldPoints(arrow);
+    world.splice(1, 0, [(world[0][0] + world.at(-1)[0]) / 2, world[0][1] - 100]);
+    const angle = 0.7, cos = Math.cos(angle), sin = Math.sin(angle), first = world[0];
+    const points = world.map(([x, y]) => [cos * (x - first[0]) + sin * (y - first[1]), -sin * (x - first[0]) + cos * (y - first[1])]);
+    const xs = points.map(point => point[0]), ys = points.map(point => point[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    Object.assign(arrow, { angle, points, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
+      x: first[0] + (cos - 1) * cx - sin * cy, y: first[1] + sin * cx + (cos - 1) * cy });
+    if (sourceStyle === 'curved') Object.assign(arrow, styleLinearElement(arrow, 'curved'));
+    const snapshot = structuredClone(board);
+    const styled = applyOperations(board, [{ op: 'update', id: 'edge', lineStyle }]), edge = find(styled, 'edge');
+    const after = linearWorldPoints(edge);
+    for (const index of [0, -1]) { near(after.at(index)[0], world.at(index)[0]); near(after.at(index)[1], world.at(index)[1]); }
+    assert.equal(edge.angle, 0);
+    assert.equal(edge.startBinding.elementId, 'a'); assert.equal(edge.endBinding.elementId, 'b');
+    if (lineStyle !== 'straight') { near(after[1][0], world[1][0]); near(after[1][1], world[1][1]); }
+    const moved = applyOperations(styled, [{ op: 'update', id: 'a', y: 240 }]), movedWorld = linearWorldPoints(find(moved, 'edge'));
+    if (lineStyle !== 'straight') { near(movedWorld[1][0], world[1][0]); near(movedWorld[1][1], world[1][1]); }
+    assert.equal(find(moved, 'edge').startBinding.elementId, 'a');
+    assert.doesNotThrow(() => validateScene(moved));
+    assert.deepEqual(board, snapshot);
+  }
+});
+
+test('native elbow arrow conversion is validated, detached and cleans fixed routing metadata', () => {
+  const board = diagram(), native = find(board, 'edge');
+  native.elbowed = true; native.fixedSegments = [{ index: 1, start: [0, 0], end: [100, 0] }];
+  native.startIsSpecial = true; native.endIsSpecial = true;
+  native.startBinding.fixedPoint = [1, 0.5]; native.endBinding.fixedPoint = [0, 0.5];
+  const snapshot = structuredClone(board);
+  for (const lineStyle of LINE_STYLES) {
+    const next = applyOperations(board, [{ op: 'update', id: 'edge', lineStyle }]), edge = find(next, 'edge');
+    assert.equal(edge.elbowed, false); assert.equal(edge.fixedSegments, null);
+    assert.equal(edge.startIsSpecial, false); assert.equal(edge.endIsSpecial, false);
+    assert.equal(edge.startBinding.fixedPoint, null); assert.equal(edge.endBinding.fixedPoint, null);
+    assert.equal(edge.startBinding.elementId, 'a'); assert.equal(edge.endBinding.elementId, 'b');
+    assert.deepEqual(validateScene(next).elements, next.elements);
+  }
+  assert.deepEqual(board, snapshot);
 });
 
 test('scene enforces element count and UTF-8 JSON byte limits', () => {

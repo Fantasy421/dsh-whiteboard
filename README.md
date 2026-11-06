@@ -2,19 +2,31 @@
 
 Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话的 AI 共用。图形、连线、文字都可继续编辑，不调用图像生成服务。
 
-> **0.1.1 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；59 项自动化测试及构建通过，已完成桌面 profile 安装和实际白板读取工具调用验证。侧栏画布、手绘、导出等 GUI 交互尚未完整验收；不要把构建或后端工具调用成功等同于 GUI 联调通过。
+> **0.2.0 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；132 项自动化测试及构建通过，包含多白板、线型编辑和刷新修复。侧栏画布、手绘、导出等真实 GUI 交互尚未完整验收；不要把构建、组件桩测试或后端工具调用成功等同于 GUI 联调通过。
 
-## 首版功能
+## 功能
 
-- 右侧栏的「协作白板」入口；每个会话一个独立画板，可放大编辑。
+- 右侧栏的「协作白板」入口；每个会话支持多张独立白板，可管理、快速跳转和大屏编辑。
 - Excalidraw 原生选择、拖动、缩放、图形、箭头、文字、自由笔、撤销/重做。
-- AI 通过 `whiteboard_read` / `whiteboard_patch` 读取当前会话画板并增量编辑。
+- AI 通过 `whiteboard_list` / `whiteboard_manage` 管理本会话白板，通过 `whiteboard_read` / `whiteboard_patch` 指定白板并增量编辑。
 - 活跃画板约每秒同步，停止输入后约 550ms 尝试自动保存；网络和操作耗时不计在内。
 - 按会话保存到本机，关闭重开后恢复；内嵌 PNG/JPEG/WebP 图片也可保存。
 - 导出 PNG、SVG 和 `.excalidraw` 可编辑源文件。
 - 版本号 CAS + 三方合并：不同对象的并发修改可合并；同一对象冲突时暂停同步，保留本地修改，不静默覆盖。
 - 浏览器本地恢复备份（容量受浏览器限制）；冲突时可先下载源文件，再明确选择加载服务器版本。
 - 字体随插件打包并由现有 DSH 已认证 `/api` 端点提供，不新增端口。
+
+### 0.2.0 新增与修复
+
+- **同一会话多白板**：新建、重命名、确认删除；搜索名称/ID、下拉直达、上一张/下一张。导航跟随大屏容器，切换前先确认当前内容已保存；离线、冲突或尚在绘图时保留当前草稿，不强制跳转。
+- 每张白板独立场景版本、恢复备份和本次打开的撤销历史。旧单白板原文件继续作为 `default`，读取不会迁移或重写原数据；不能删除最后一张白板。切换白板会重建原生编辑器，本次打开的撤销历史不会跨白板保存。
+- AI 新增 `whiteboard_list` / `whiteboard_manage`；`whiteboard_read`、`whiteboard_patch` 接受 `boardId`。多白板时写操作必须指定 ID，避免切换后写错图；目录版本与场景版本分离。
+- 连线样式 **直线 / 曲线 / 折线** 同时用于普通线和箭头。选中未锁定的连线后，点击顶部同名按钮批量切换；其他图形不受影响。曲线与折线保留原生可编辑控制点、箭头绑定、选区和撤销记录，不是图片。
+- 曲线自动生成可见弯曲；折线从两个端点生成多拐点走线。已有多点路径可保持自己的拐点。双击线条进入原生编辑模式后可继续拖动控制点排版；普通多点折线不是自动避障路由，移动节点后可能需要调整拐点。
+- 请求超时后释放同步队列，取消拖动或窗口失焦后恢复轮询；保存回包丢失时先读取确认，不盲目覆盖。额外并发版本使结果无法确认时仍保守暂停。
+- 旋转连线转换会补偿端点位置，后端重新绑定时保留已有世界坐标拐点；旋转与标签布局按无随机抖动的理想曲线计算，原生手绘笔触可能有少量偏差，尚待真实 GUI 验收。
+
+下方 v0.2.0 预构建包包含上述功能和修复。已安装旧版的用户需要重新安装新版并刷新或重启原 DSH；仅更新源码或刷新旧包不会增加新功能。
 
 ## 开发与打包
 
@@ -26,7 +38,7 @@ npm run check
 npm pack
 ```
 
-`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.1.1.tgz`。
+`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.2.0.tgz`。
 
 ## 安装到桌面 DSH
 
@@ -37,16 +49,16 @@ npm pack
 在 DSH 的「设置 → 插件 → 添加插件」中填写以下**完整下载地址**，不要填写 Release 展示页、GitHub ZIP 源码下载页或裸包名：
 
 ```text
-https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.1.1/dsh-whiteboard-0.1.1.tgz
+https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.0/dsh-whiteboard-0.2.0.tgz
 ```
 
 如果有可用的 DSH CLI，同样可以执行：
 
 ```bash
-dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.1.1/dsh-whiteboard-0.1.1.tgz
+dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.0/dsh-whiteboard-0.2.0.tgz
 ```
 
-也可以从 [v0.1.1 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.1.1) 的 **Assets** 下载 `dsh-whiteboard-0.1.1.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
+也可以从 [v0.2.0 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.2.0) 的 **Assets** 下载 `dsh-whiteboard-0.2.0.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
 
 预构建包包含 `package.json` 中的 `dsh.bundle.patch`、对应补丁、编译后的 host/client 和字体。针对 DSH `0.2.1-rc.3` 验证，其他版本如有报错，请同时提供 DSH 版本、原样安装输入及完整错误。
 
@@ -62,14 +74,14 @@ cd ~/.dsh/profiles/desktop
 cp -p package.json "package.json.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 cp -p pnpm-lock.yaml "pnpm-lock.yaml.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 # 替换为实际 tarball 绝对路径。DSH 专用 peer 模块由宿主提供。
-pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.1.1.tgz
+pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.2.0.tgz
 ```
 
-若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.1.1.tgz`。
+若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.2.0.tgz`。
 
 2. 在该 profile 的 `package.json` → `dsh.profile.bundles` 数组末尾追加 `"dsh-whiteboard"`，保留其余所有项；不要替换整个数组。插件自带 bundle patch，会挂载 host 和 client 两侧。
 3. 重启原来的 DSH 桌面应用，在现有 GUI 打开会话、展开右侧栏，在入口页选择「协作白板」。如果有旧页面缓存，刷新该页面。
-4. 开启一个新 AI 会话，确认工具列表中存在 `whiteboard_read`、`whiteboard_patch`。若预设限制了工具，需要在该预设允许它们。
+4. 开启一个新 AI 会话，确认工具列表中存在 `whiteboard_list`、`whiteboard_manage`、`whiteboard_read`、`whiteboard_patch`。若预设限制了工具，需要在该预设允许它们。
 
 不要启动另一个 Web 服务器来替代原 GUI。开发时生成的文件不会自动更新当前 GUI；需要重新打包安装并重启/刷新。使用 pnpm 管理 profile 时，应保持其原来的包管理方式，不要混写锁文件。
 
@@ -86,6 +98,14 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 
 人工绘图使用画板原生工具栏。撤销/重做使用画板内原生按钮/快捷键，键盘事件只在画板聚焦时处理，不全局抢占 DSH 快捷键。窄侧栏右上角提供醒目的「大屏编辑」，打开后点「返回侧栏」收起；空闲状态按 Esc 也可返回，正在编辑文字、绘图、选择对象或打开原生菜单时，Esc 优先交给画板处理。顶部始终显示 `− / 百分比 / ＋ / 适应` 控件，点击百分比恢复 100%；缩放以视口中心为锚点，不改变共享图形。大屏使用稳定的页面级容器，切换时不重建编辑器、不清空撤销历史，也不自动重置缩放或平移。
 
+### 同一会话多白板
+
+导航区可新建、重命名、删除白板，输入名称或 ID 搜索，下拉选择或用「上一张 / 下一张」快速切换。名称最长 80 个 UTF-16 单元；可重名，以稳定 ID 区分。删除只从目录隐藏，不清除磁盘文件，但当前没有恢复入口，请先导出。
+
+切换前会尝试保存；保存失败、存在冲突或原生编辑还没结束时不切换。目录操作期间暂时冻结当前画布输入，再检查一次草稿是否安全。其他窗口或 AI 修改默认白板不会强行拉走已打开视图；关闭重开时按会话首选白板加载。AI 新建后可在列表选择对应名字查看；也可说“在名为‘登录流程’的白板上画图”，AI 先列出并确认 ID 后再编辑。
+
+如果其他窗口删除了当前白板，编辑器保留其草稿供导出；明确点击「关闭已删除白板」并确认后才离开。目录请求超时只重新读取结果，不自动重复新建或删除。
+
 ### 安装后的交互验收清单（尚待实机执行）
 
 - [ ] 在原 GUI 出现侧栏入口；打开后画布可见、无重复 React 报错。
@@ -100,15 +120,26 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 - [ ] 在窄侧栏及大屏模式下，缩放控件和「大屏编辑 / 返回侧栏」可见；反复切换不丢失绘图、选区和撤销历史。
 - [ ] 空闲 Esc 返回侧栏；文字编辑、对象选择、原生菜单和对话框优先处理 Esc。
 - [ ] 大屏内清空确认对话框正常显示；隐藏、关闭或切换会话后，不留下大屏遮罩。
+- [ ] 新构建中选中线条/箭头后切换直线、曲线、折线；未选中和已锁定的线条不被修改。双击后控制点可继续编辑，标签随线移动。
+- [ ] 走线样式切换可撤销/重做，等待保存后关闭重开不丢失；AI 指定 `lineStyle` 与人工转换效果一致。
+- [ ] 同会话创建三张白板，分别绘图；搜索、下拉、上一张/下一张及大屏内导航均正常，切换不串图或撤销记录。
+- [ ] 离线或冲突时切换被阻止，未保存内容仍可导出；保存成功后再切换，关闭重开恢复正确首选白板。
+- [ ] 重命名后列表更新；删除需确认且最后一张不可删。其他窗口删除当前白板时保留草稿，显式导出/确认关闭后才退出。
+- [ ] AI list/manage/read/patch 指向正确 ID；目录与场景 CAS 冲突分别处理，旧 default 内容不变。
 
 组件回归测试以原生编辑器桩验证挂载次数、同步会话、视图控件和生命周期；它不替代实际浏览器的布局、焦点、撤销行为及第三方对话框验收。
 
 ## AI 工具示例
 
-先读 `whiteboard_read`，取其 `revision`。例如读到 0 后：
+先调用 `whiteboard_list` 获取 `{revision, activeBoardId, boards:[{id,name}]}`，需要新建/重命名/删除/设置首选时调用 `whiteboard_manage`：`{action, baseRevision, boardId?, name?}`，这里 `baseRevision` 是**目录版本**。`create` 可省略名称且不传 boardId；`rename` 必须传 boardId 和名称；`activate/delete` 只传 boardId，删除必须有用户明确意图。目录操作冲突或结果未知后重新 list，不能盲目重试。
+
+再用 `whiteboard_read({boardId})` 获取对应图的 **场景 revision**；`whiteboard_patch` 始终同时携带该 boardId 和场景 baseRevision，多白板时省略 ID 的写操作会被拒绝。省略 ID 的 read 返回会话首选图，不一定是某个已打开窗口正在编辑的图。元素 ID 只在对应图内有意义。
+
+例如读到默认白板 `boardId: "default", revision: 0` 后：
 
 ```json
 {
+  "boardId": "default",
   "baseRevision": 0,
   "operations": [
     { "op": "add", "id": "input", "type": "rectangle", "x": 0, "y": 60, "width": 180, "height": 90, "text": "用户输入" },
@@ -120,14 +151,29 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 
 支持 `add / update / delete`；节点类型 `rectangle / diamond / ellipse / text / arrow / line`。添加节点时 `text` 生成原生绑定文字，移动节点会更新其绑定箭头。删除会保留墓碑、清理依赖，AI 不能复用已删除 ID。操作按数组顺序执行，先节点后连线。每批最多 100 条，失败则整批不落盘。
 
+`lineStyle` 只用于 `line` / `arrow`：`straight`（直线）、`curved`（曲线）、`polyline`（折线）；不在普通节点或 `delete` 操作上填写它。省略则保持现有默认行为。`points` 是相对该线条 `x/y` 原点的 `[x,y]` 数组，而不是绝对画布坐标；多点路径可精确指定经过哪些位置。将多点线显式切换为 `straight` 会收为首尾两点。
+
+例如，**先读最新 revision**，再将下面操作加入 `whiteboard_patch.operations`（适用于 v0.2.0）：
+
+```json
+[
+  { "op": "add", "id": "curved-link", "type": "line", "x": 0, "y": 200, "width": 240, "height": 0, "lineStyle": "curved" },
+  { "op": "add", "id": "routed-link", "type": "arrow", "startId": "input", "endId": "check", "lineStyle": "polyline" },
+  { "op": "update", "id": "curved-link", "lineStyle": "curved", "points": [[0, 0], [120, -70], [240, 0]] }
+]
+```
+
+`startId/endId` 仍只用于箭头，不给普通线或节点填写。绑定端点会根据节点边缘调整，中间手动拐点保留；这不是自动避障或始终保持正交的路由器。
+
 冲突后 AI 必须重新读取，考虑人的最新修改，再形成新操作；不能盲目把旧意图改成新版本号重试。
 
 ## 数据与边界
 
-- 服务器默认存储：`~/.dsh/whiteboards/<SHA256(sessionId)>.json`，文件权限 0600；会话 ID 不作为路径片段。
+- 旧/默认白板仍存储于 `~/.dsh/whiteboards/<SHA256(sessionId)>.json`。多白板目录位于 `catalogs/<SHA256(sessionId)>.json`；新图存储于 `boards/<SHA256(sessionId)>/<boardId>/<SHA256(sessionId)>.json`，boardId 仅允许 `default` 或服务端生成的小写 UUID。文件权限 0600，会话 ID 不作为路径片段。
+- 单会话最多 100 张存活白板、1000 个累计目录条目（含删除记录），目录上限 512KiB；删除后 ID 不复用，超过上限需另开会话。目录与场景的串行锁只保证同一服务进程内安全，不支持多个 DSH 进程共享写入。
 - 同步复用 DSH 已认证接口；不创建公网无鉴权 API。画板内容可能含敏感信息，导出/分享需自行检查。
 - 不执行画板内文字，不接受 iframe/网页嵌入、活动脚本链接、SVG 图片或远程图片引用。文本里可以正常讨论代码，文本不会成为指令。
-- 最大 2000 个元素（含标签及删除墓碑），每个场景 JSON 8MiB。超出会显示保存失败，保留本地内容供导出；重试不能突破限制。
+- 最大 2000 个元素（含标签及删除墓碑），每个场景 JSON 8MiB，每条线最多 20000 个控制点。满额共线线条切换曲线需要新增拐点时会拒绝转换，不覆盖已有控制点。超出场景限制会显示保存失败，保留本地内容供导出；重试不能突破限制。
 - 首版不持久化缩放、背景色、网格等个人视图状态；保存的是元素、内嵌图片和选区。撤销历史只在本次打开的画板中有效。
 - 首版不含多人远程协作、跨进程分布式锁、无限历史和模型 token 级动画。单个 DSH 服务进程管理这个数据目录；不要让多个进程共享写入。
 - 同步是对象级三方合并，不是字符级 CRDT。一个对象的不同字段同时变化也可能触发冲突，以避免误覆盖。
@@ -138,6 +184,8 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 - [host 和工具](src/index.mjs)：工具注册、会话身份绑定、认证载体路由、字体服务。
 - [模型](src/model.mjs)：原生 Excalidraw 元素、图形/绑定/安全校验、原子增量操作。
 - [存储](src/store.mjs)：按会话串行、版本比较、原子写入、磁盘恢复。
+- [多白板存储](src/workspace.mjs) / [导航](src/Boards.jsx)：独立目录 CAS、兼容旧图、管理与安全切换。
+- [恢复备份](src/recovery.mjs)：按会话/白板隔离，保留旧 default 的浏览器备份键。
 - [同步](src/sync.mjs)：三方合并、恢复备份、并发和冲突状态。
 - [界面](src/Whiteboard.jsx) / [客户端注册](src/client.jsx)：画板、导出、侧栏插槽。
 - [构建](scripts/build.mjs)：Host ESM + DSH lazy CJS 客户端，共用宿主 React，不重复打包 React。

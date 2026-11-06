@@ -57,6 +57,7 @@ export class BoardSync {
   constructor({ read, write, onScene, onStatus = () => {}, recovery, normalize = scene => scene }) {
     Object.assign(this, { read, write, onScene, onStatus, recovery, normalize });
     this.base = null; this.baseScene = null; this.local = null; this.disposed = false; this.paused = false;
+    this.uncertainWrite = null;
   }
   get dirty() { return this.base && !equal(this.baseScene, this.local); }
   async start() {
@@ -66,7 +67,11 @@ export class BoardSync {
     let recovered;
     try { recovered = this.recovery?.load(); } catch { /* Recovery storage may be disabled. */ }
     if (recovered) {
-      try { this.local = mergeScenes(this.normalize(sceneOf(recovered.base)), this.normalize(recovered.local), this.baseScene); }
+      try {
+        const previous = this.normalize(sceneOf(recovered.base));
+        const submitted = this.confirmedSubmission(remote, recovered.uncertainWrite);
+        this.local = mergeScenes(submitted ?? previous, this.normalize(recovered.local), this.baseScene);
+      }
       catch {
         this.local = recovered.local; this.paused = true;
         this.onStatus('conflict', '检测到未保存的本地修改；请先下载源文件备份，再决定是否加载服务器版本。');
@@ -82,14 +87,23 @@ export class BoardSync {
     if (!this.paused) this.onStatus('dirty');
   }
   backup() {
+    // An uninitialized owner must not clear a previous owner's unsynced draft.
+    if (!this.base || !this.baseScene || !this.local) return;
     try {
-      if (this.dirty) this.recovery?.save({ base: { ...this.base, ...this.baseScene }, local: this.local });
+      if (this.dirty || this.uncertainWrite) this.recovery?.save({ base: { ...this.base, ...this.baseScene }, local: this.local, uncertainWrite: this.uncertainWrite });
       else this.recovery?.clear();
     } catch { this.onStatus('warning', '浏览器本地备份不可用，请及时导出源文件；服务器保存仍会重试。'); }
   }
-  integrate(remote) {
+  confirmedSubmission(remote, attempt) {
+    // A lost acknowledgement is not another editor's conflicting change. Only
+    // recognize an exact next-revision snapshot; otherwise use normal CAS/merge.
+    if (!attempt || remote.revision !== attempt.revision + 1) return null;
+    const submitted = this.normalize(attempt.scene);
+    return equal(submitted, this.normalize(sceneOf(remote))) ? submitted : null;
+  }
+  integrate(remote, baseline = this.baseScene) {
     const incoming = this.normalize(sceneOf(remote));
-    const merged = mergeScenes(this.baseScene, this.local, incoming);
+    const merged = mergeScenes(baseline, this.local, incoming);
     const changed = !equal(this.local, merged);
     this.base = remote; this.baseScene = incoming; this.local = merged;
     this.backup();
@@ -103,13 +117,24 @@ export class BoardSync {
   }
   async run() {
     try {
+      if (this.uncertainWrite) {
+        // Check the server before retrying an operation whose commit is unknown.
+        const remote = await this.read();
+        if (this.disposed) return;
+        const baseline = this.confirmedSubmission(remote, this.uncertainWrite) ?? this.baseScene;
+        this.uncertainWrite = null;
+        this.integrate(remote, baseline);
+      }
       if (this.dirty) {
         this.onStatus('saving');
         const submitted = structuredClone(this.local);
+        this.uncertainWrite = { revision: this.base.revision, scene: submitted };
+        this.backup();
         const remote = await this.write(this.base.revision, submitted);
         if (this.disposed) return;
         // Edits made during an in-flight save are based on the submitted scene,
         // not the old server baseline. They must remain dirty, not conflict with our own save.
+        this.uncertainWrite = null;
         const incoming = this.normalize(sceneOf(remote));
         const merged = mergeScenes(submitted, this.local, incoming);
         const changed = !equal(this.local, merged);
@@ -125,6 +150,7 @@ export class BoardSync {
       if (this.disposed) return;
       const remote = error.board ?? error.details?.board;
       if (remote) {
+        this.uncertainWrite = null; // A correlated CAS rejection did not commit.
         try {
           this.integrate(remote);
           this.onStatus('dirty'); // Re-evaluate and write on next tick, not a blind stale retry.
@@ -133,14 +159,18 @@ export class BoardSync {
       }
       if (error.code === 'conflict' || error.code === 'whiteboard/conflict') {
         this.paused = true; this.backup(); this.onStatus('conflict', error.message);
-      } else this.onStatus('offline', error.message ?? '保存失败；保留本地修改，自动重试。');
+      } else {
+        if (error.code === 'whiteboard/request-failed') this.uncertainWrite = null;
+        this.backup();
+        this.onStatus('offline', error.message ?? '保存失败；保留本地修改，自动重试。');
+      }
     }
   }
   async discardLocalAndReload() {
     if (this.inflight) await this.inflight;
     const remote = await this.read();
     if (this.disposed) return;
-    this.base = remote; this.baseScene = this.normalize(sceneOf(remote)); this.local = this.baseScene; this.paused = false;
+    this.base = remote; this.baseScene = this.normalize(sceneOf(remote)); this.local = this.baseScene; this.paused = false; this.uncertainWrite = null;
     this.backup(); this.onScene(this.local, { initial: true }); this.onStatus('saved');
   }
   dispose() { this.backup(); this.disposed = true; }

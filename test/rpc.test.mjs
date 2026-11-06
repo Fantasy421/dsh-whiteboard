@@ -10,6 +10,7 @@ async function fixture(t) {
   // Verified mkdtemp result; cleanup only this test-owned directory.
   t.after(async () => { if (!directory.startsWith(join(tmpdir(), 'dsh-wb-rpc-'))) throw new Error('Unsafe cleanup'); await rm(directory, { recursive: true }); });
   const store = new BoardStore({ directory });
+  t.after(() => store.dispose());
   return { store, handler: createRpcHandler(store) };
 }
 const request = (method, payload) => new Request('http://localhost/api/dsh-whiteboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'test-call', method: 'dsh-whiteboard', payload: { method, payload } }) });

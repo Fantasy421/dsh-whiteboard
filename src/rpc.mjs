@@ -19,16 +19,23 @@ export function createRpcHandler(store) {
       const { method, payload } = message.payload ?? {};
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid payload');
       const { sessionId } = payload;
-      let board;
-      if (method === 'get') board = await store.get(sessionId);
-      else if (method === 'save') board = await store.save(sessionId, payload.baseRevision, payload.scene);
+      let value;
+      if (method === 'get') value = await store.get(sessionId, payload.boardId);
+      else if (method === 'save') value = await store.save(sessionId, payload.baseRevision, payload.scene, payload.boardId);
+      else if (method === 'list') value = await store.list(sessionId);
+      else if (method === 'manage') {
+        const options = {};
+        if (payload.boardId !== undefined) options.boardId = payload.boardId;
+        if (payload.name !== undefined) options.name = payload.name;
+        value = await store.manage(sessionId, payload.baseRevision, payload.action, options);
+      }
       else throw new Error('Unknown whiteboard operation');
-      return reply({ ok: true, value: board });
+      return reply({ ok: true, value });
     } catch (error) {
       return reply({ ok: false, error: {
-        code: error.code === 'conflict' ? 'whiteboard/conflict' : 'whiteboard/request-failed',
+        code: error.code === 'conflict' ? 'whiteboard/conflict' : error.code === 'catalog-conflict' ? 'whiteboard/catalog-conflict' : error.code === 'not-found' ? 'whiteboard/not-found' : 'whiteboard/request-failed',
         message: error.message,
-        details: error.board ? { board: error.board } : {},
+        details: error.board ? { board: error.board } : error.catalog ? { catalog: error.catalog } : {},
       } });
     }
   };
