@@ -30,7 +30,7 @@ test('sidebar view and selected-line controls retain editor, history and sync ow
   let mounts = 0, unmounts = 0, reads = 0, saves = 0, refreshes = 0, historyClears = 0;
   let nativeElements = [];
   const changes = [];
-  const api = { getAppState: () => state, getSceneElements: () => nativeElements.filter(e => !e.isDeleted), getSceneElementsIncludingDeleted: () => nativeElements, getFiles: () => ({}), addFiles() {}, history: { clear() { historyClears++; } }, refresh() { refreshes++; }, scrollToContent() {}, updateScene(change) { changes.push(change); if (change.elements) nativeElements = change.elements; Object.assign(state, change.appState); } };
+  const api = { setActiveTool(tool) { state.activeTool = { ...state.activeTool, ...tool, customType: null, locked: false, lastActiveTool: null }; }, getAppState: () => state, getSceneElements: () => nativeElements.filter(e => !e.isDeleted), getSceneElementsIncludingDeleted: () => nativeElements, getFiles: () => ({}), addFiles() {}, history: { clear() { historyClears++; } }, refresh() { refreshes++; }, scrollToContent() {}, updateScene(change) { changes.push(change); if (change.elements) nativeElements = change.elements; Object.assign(state, change.appState); } };
   globalThis.__wbUi = { api, mount: () => mounts++, unmount: () => unmounts++ };
   let renderer;
   try {
@@ -239,6 +239,20 @@ test('sidebar view and selected-line controls retain editor, history and sync ow
     state.selectedElementIds = { route: true };
     await act(async () => editor().props.onChange(nativeElements, state, {}));
     assert.equal(button('连线：折线'), undefined, 'locked lines must not expose convenience conversion controls');
+    // Native webpage placement creates an element AND keeps gesture references
+    // in AppState. Rejecting only the elements must not leave dangling editor state.
+    const draftBeforeEmbed = structuredClone(nativeElements);
+    const embed = { id: 'webpage-placement', type: 'embeddable', x: 20, y: 20, width: 100, height: 80, isDeleted: false };
+    const clearsBeforeEmbed = historyClears;
+    Object.assign(state, { activeTool: { type: 'embeddable', locked: false }, newElement: embed, resizingElement: embed, activeEmbeddable: { element: embed, state: 'active' }, selectedElementIds: { [embed.id]: true } });
+    nativeElements = [...nativeElements, embed];
+    await act(async () => { editor().props.onPointerDown(); editor().props.onChange(nativeElements, state, {}); });
+    assert.equal(state.newElement, null, 'rejecting webpage placement must cancel its native gesture, not just remove its scene element');
+    assert.equal(state.resizingElement, null);
+    assert.equal(state.activeEmbeddable, null);
+    assert.equal(state.activeTool.type, 'selection');
+    assert.deepEqual(nativeElements, draftBeforeEmbed, 'rejected embeds must not destroy the existing local draft');
+    assert.equal(historyClears, clearsBeforeEmbed, 'rejected embeds must retain the existing undo history');
     const guards = new Map();
     const registerLeaveGuard = (id, guard) => { guards.set(id, guard); return () => guards.delete(id); };
     const guardProps = { ...props, sessionId: 'guard-session', boardId: 'board-a', boardName: 'Architecture', blocked: true, navigation: React.createElement('navigation-test'), registerLeaveGuard, signal: new AbortController().signal };

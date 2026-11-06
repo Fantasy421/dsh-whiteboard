@@ -58,6 +58,10 @@
 .dsh-whiteboard .excalidraw{--color-primary:#6965db;height:100%;width:100%}
 .dsh-whiteboard .excalidraw .App-menu_top{gap:4px}
 .dsh-whiteboard .excalidraw .help-icon{display:none}
+/* Excalidraw 0.18 has no public option to hide its embeddable/magic-frame item.
+   These scene types cannot be stored here. Runtime input validation remains the
+   authority for pasted/imported objects and command-palette activation. */
+.dsh-whiteboard .excalidraw [data-testid="toolbar-embeddable"]{display:none}
 @media(max-width:600px){.dsh-wb-surface--expanded{padding:0}.dsh-wb-surface--expanded .dsh-whiteboard{border:0;border-radius:0}}
 @media(max-height:480px){.dsh-wb-hint{display:none}.dsh-wb-surface--expanded{padding:0}}
 @media(prefers-color-scheme:dark){.dsh-wb-header,.dsh-wb-hint{background:#f7f7fb}}

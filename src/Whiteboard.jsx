@@ -34,6 +34,7 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
   const expanded = fullscreen && visible && !signal?.aborted;
   const [retry, setRetry] = useState(0);
   const syncRef = useRef(null), timerRef = useRef(null), visibleRef = useRef(visible), busyRef = useRef(false);
+  const rejectingRef = useRef(null);
   const [ready, setReady] = useState(false);
   visibleRef.current = visible;
   const onApi = useCallback(value => setApi(value), []);
@@ -165,22 +166,50 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
     return () => window.removeEventListener('beforeunload', unload);
   }, []);
   const onChange = useCallback((elements, appState, files) => {
+    const sync = syncRef.current;
+    // Excalidraw calls onChange on every componentDidUpdate, including updates
+    // caused by our warning. Stop re-entry BEFORE any parent state writes; a
+    // microtask alone cannot break React's synchronous update-depth loop.
+    if (sync && rejectingRef.current === sync) return;
     if (appState.zoom) setZoom(appState.zoom.value);
     const selectedLines = elements.filter(element => editableLine(element) && appState.selectedElementIds?.[element.id]);
     const styles = new Set(selectedLines.map(element => element.elbowed ? 'polyline' : element.roundness ? 'curved' : element.points.length > 2 ? 'polyline' : 'straight'));
     const style = styles.size === 1 ? [...styles][0] : null;
     setLineSelection(previous => previous.count === selectedLines.length && previous.style === style ? previous : { count: selectedLines.length, style });
-    const sync = syncRef.current;
     if (!sync?.base || sync.disposed) return;
     // Image placement is transient until Excalidraw attaches its embedded file.
     if (elements.some(e => !e.isDeleted && e.type === 'image' && e.fileId == null)) return;
     const { rejected, scene } = safeNativeInput(elements, files, Object.keys(appState.selectedElementIds).filter(id => appState.selectedElementIds[id]));
-    if (rejected) {
-      setStatus({ kind: 'warning', message: '未添加不支持的内容：首版不支持网页嵌入、SVG/GIF 图片；图片请用 PNG/JPEG/WebP。' });
+    const unsupportedTool = ['embeddable', 'magicframe'].includes(appState.activeTool?.type);
+    if (rejected || unsupportedTool) {
+      rejectingRef.current = sync;
+      const message = '当前白板不支持网页嵌入、SVG/GIF 图片，未添加这些内容；原有图形已保留。图片请用 PNG/JPEG/WebP。';
+      setStatus(previous => previous.kind === 'warning' && previous.message === message ? previous : { kind: 'warning', message });
       queueMicrotask(() => {
-        if (syncRef.current !== sync || sync.disposed) return;
-        api?.updateScene({ elements: structuredClone(sync.local.elements), appState: { selectedElementIds: Object.fromEntries(sync.local.selectedIds.map(id => [id, true])), activeTool: { type: 'selection' } }, captureUpdate: CaptureUpdateAction.NEVER });
-        api?.history.clear();
+        try {
+          if (syncRef.current !== sync || sync.disposed) return;
+          clearTimeout(timerRef.current); busyRef.current = false;
+          // Use the public setter: updateScene shallow-replaces activeTool and
+          // would otherwise drop native locked/lastActiveTool/customType fields.
+          api?.setActiveTool({ type: 'selection' });
+          api?.updateScene({
+            elements: structuredClone(sync.local.elements),
+            appState: {
+              selectedElementIds: Object.fromEntries(sync.local.selectedIds.map(id => [id, true])),
+              selectedGroupIds: {}, editingGroupId: null, hoveredElementIds: {},
+              newElement: null, multiElement: null, resizingElement: null, selectionElement: null,
+              editingTextElement: null, editingLinearElement: null, selectedLinearElement: null,
+              activeEmbeddable: null, startBoundElement: null, suggestedBindings: [],
+              pendingImageElementId: null, isResizing: false, isRotating: false,
+              selectedElementsAreBeingDragged: false, cursorButton: 'up',
+              openDialog: null, showHyperlinkPopup: false, snapLines: [], originSnapOffset: null,
+            },
+            captureUpdate: CaptureUpdateAction.NEVER,
+          });
+          // Do not erase the user's undo history just because an input is unsupported.
+        } finally {
+          if (rejectingRef.current === sync) rejectingRef.current = null;
+        }
       });
       return;
     }

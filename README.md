@@ -2,7 +2,7 @@
 
 Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话的 AI 共用。图形、连线、文字都可继续编辑，不调用图像生成服务。
 
-> **0.2.1 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；134 项自动化测试及构建通过，包含紧凑顶部、多白板、线型编辑和刷新修复。侧栏画布、手绘、导出等真实 GUI 交互尚未完整验收；不要把构建、组件桩测试或后端工具调用成功等同于 GUI 联调通过。
+> **0.2.2 开发版**。针对 DSH `0.2.1-rc.3` 的公开接口开发；135 项自动化测试及构建通过，包含网页嵌入误操作白屏修复、紧凑顶部、多白板、线型编辑和刷新修复。侧栏画布、手绘、导出等真实 GUI 交互尚未完整验收；不要把构建、组件桩测试或后端工具调用成功等同于 GUI 联调通过。
 
 ## 功能
 
@@ -15,6 +15,13 @@ Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话
 - 版本号 CAS + 三方合并：不同对象的并发修改可合并；同一对象冲突时暂停同步，保留本地修改，不静默覆盖。
 - 浏览器本地恢复备份（容量受浏览器限制）；冲突时可先下载源文件，再明确选择加载服务器版本。
 - 字体随插件打包并由现有 DSH 已认证 `/api` 端点提供，不新增端口。
+
+### 0.2.2 网页嵌入白屏修复
+
+- 修复选择“嵌入网页”后可能白屏：原生编辑器会在父组件更新后再次通知场景变化；拒绝内容时反复创建提示状态，会在回退微任务运行前触发 React 更新深度限制。现在对同一画板的回退做重入保护并合并提示。
+- 恢复最后已接收的本地草稿，而不是直接加载服务器版本；取消网页绘制/缩放/链接编辑残留状态，不清空已有撤销历史。回退仅作用于原画板实例，关闭或切换后不会写入另一个画板。
+- **并未增加网页嵌入支持**：当前存储和安全策略仍不接受 iframe/网页。隐藏原生编辑器中误导性的嵌入入口，命令面板选择嵌入工具、粘贴或导入不支持内容仍经过运行时检查。不要通过编辑源文件绕过校验。
+- 生命周期回归使用实际白板组件与原生 `componentDidUpdate → onChange` 行为桩；不等同于实机浏览器验收。
 
 ### 0.2.1 紧凑界面
 
@@ -35,7 +42,7 @@ Excalidraw 风格的 DeepSeek Harness 插件：右侧画板由人和当前会话
 - 请求超时后释放同步队列，取消拖动或窗口失焦后恢复轮询；保存回包丢失时先读取确认，不盲目覆盖。额外并发版本使结果无法确认时仍保守暂停。
 - 旋转连线转换会补偿端点位置，后端重新绑定时保留已有世界坐标拐点；旋转与标签布局按无随机抖动的理想曲线计算，原生手绘笔触可能有少量偏差，尚待真实 GUI 验收。
 
-下方 v0.2.1 预构建包包含上述功能和修复。已安装旧版的用户需要重新安装新版并刷新或重启原 DSH；仅更新源码或刷新旧包不会增加新功能。
+下方 v0.2.2 预构建包包含上述功能和修复。已安装旧版的用户需要重新安装新版并刷新或重启原 DSH；仅更新源码或刷新旧包不会增加新功能。
 
 ## 开发与打包
 
@@ -47,7 +54,7 @@ npm run check
 npm pack
 ```
 
-`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.2.1.tgz`。
+`check` 运行测试并生成插件产物。`pack` 再次检查后创建 `dsh-whiteboard-0.2.2.tgz`。
 
 ## 安装到桌面 DSH
 
@@ -58,16 +65,16 @@ npm pack
 在 DSH 的「设置 → 插件 → 添加插件」中填写以下**完整下载地址**，不要填写 Release 展示页、GitHub ZIP 源码下载页或裸包名：
 
 ```text
-https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.1/dsh-whiteboard-0.2.1.tgz
+https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.2/dsh-whiteboard-0.2.2.tgz
 ```
 
 如果有可用的 DSH CLI，同样可以执行：
 
 ```bash
-dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.1/dsh-whiteboard-0.2.1.tgz
+dsh plugin --profile desktop add https://github.com/Fantasy421/dsh-whiteboard/releases/download/v0.2.2/dsh-whiteboard-0.2.2.tgz
 ```
 
-也可以从 [v0.2.1 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.2.1) 的 **Assets** 下载 `dsh-whiteboard-0.2.1.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
+也可以从 [v0.2.2 Release](https://github.com/Fantasy421/dsh-whiteboard/releases/tag/v0.2.2) 的 **Assets** 下载 `dsh-whiteboard-0.2.2.tgz`，再把下载文件的绝对路径填到添加插件入口。不要选择 GitHub 自动生成的 Source code ZIP / tar.gz：源码仓库不提交 `lib/`，直接安装源码不等于安装预构建产物。安装完成后重启 DSH。
 
 预构建包包含 `package.json` 中的 `dsh.bundle.patch`、对应补丁、编译后的 host/client 和字体。针对 DSH `0.2.1-rc.3` 验证，其他版本如有报错，请同时提供 DSH 版本、原样安装输入及完整错误。
 
@@ -83,10 +90,10 @@ cd ~/.dsh/profiles/desktop
 cp -p package.json "package.json.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 cp -p pnpm-lock.yaml "pnpm-lock.yaml.whiteboard-backup.$(date +%Y%m%d-%H%M%S)"
 # 替换为实际 tarball 绝对路径。DSH 专用 peer 模块由宿主提供。
-pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.2.1.tgz
+pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer-dependencies=false /absolute/path/to/dsh-whiteboard-0.2.2.tgz
 ```
 
-若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.2.1.tgz`。
+若 profile 原本由 npm 管理，备份其锁文件后使用 `npm install --legacy-peer-deps --ignore-scripts /absolute/path/to/dsh-whiteboard-0.2.2.tgz`。
 
 2. 在该 profile 的 `package.json` → `dsh.profile.bundles` 数组末尾追加 `"dsh-whiteboard"`，保留其余所有项；不要替换整个数组。插件自带 bundle patch，会挂载 host 和 client 两侧。
 3. 重启原来的 DSH 桌面应用，在现有 GUI 打开会话、展开右侧栏，在入口页选择「协作白板」。如果有旧页面缓存，刷新该页面。
@@ -119,6 +126,7 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 
 - [ ] 在原 GUI 出现侧栏入口；打开后画布可见、无重复 React 报错。
 - [ ] 手画矩形、箭头、自由笔和中文文字；等到状态“已保存”。
+- [ ] 不出现网页嵌入入口；通过命令面板或导入不支持的网页对象时，仅显示提示并回到选择工具。连续点击、拖动后仍可绘图/撤销，原有未保存草稿保留，无更新深度错误。
 - [ ] 删除对象后撤销，再刷新，恢复后的对象仍存在。
 - [ ] 让 AI 画三个带标签节点和两条箭头，约一秒看到变化。
 - [ ] 选择对象，AI 读取选区并仅修改该对象。
@@ -163,7 +171,7 @@ pnpm add --ignore-scripts --config.auto-install-peers=false --config.strict-peer
 
 `lineStyle` 只用于 `line` / `arrow`：`straight`（直线）、`curved`（曲线）、`polyline`（折线）；不在普通节点或 `delete` 操作上填写它。省略则保持现有默认行为。`points` 是相对该线条 `x/y` 原点的 `[x,y]` 数组，而不是绝对画布坐标；多点路径可精确指定经过哪些位置。将多点线显式切换为 `straight` 会收为首尾两点。
 
-例如，**先读最新 revision**，再将下面操作加入 `whiteboard_patch.operations`（适用于 v0.2.1）：
+例如，**先读最新 revision**，再将下面操作加入 `whiteboard_patch.operations`（适用于 v0.2.2）：
 
 ```json
 [
