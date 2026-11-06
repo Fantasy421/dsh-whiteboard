@@ -1,0 +1,17 @@
+# Dependencies and generated bundles
+node_modules/
+lib/
+
+# Local packaging and diagnostics
+*.tgz
+pack-report.json
+*.log
+coverage/
+.DS_Store
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
