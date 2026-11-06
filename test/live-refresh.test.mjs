@@ -19,7 +19,7 @@ async function clientRpc(t, transport) {
   const previous = { document: globalThis.document, window: globalThis.window };
   globalThis.document = { createElement: () => ({ dataset: {}, remove() {} }), head: { append() {} } };
   globalThis.window = {};
-  const result = await build({ entryPoints: [join(root, 'src/client.jsx')], bundle: true, write: false, platform: 'node', format: 'esm', conditions: ['production'], external: ['react'], loader: { '.css': 'text', '.woff2': 'dataurl' }, plugins: [{ name: 'no-editor', setup(b) {
+  const result = await build({ entryPoints: [join(root, 'src/client.jsx')], bundle: true, write: false, platform: 'node', format: 'esm', conditions: ['production'], external: ['react', 'react-dom'], loader: { '.css': 'text', '.woff2': 'dataurl' }, plugins: [{ name: 'no-editor', setup(b) {
     b.onResolve({ filter: /\.\/Whiteboard\.jsx$/ }, () => ({ path: 'editor', namespace: 'stub' }));
     b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export function Whiteboard() { return null; }' }));
   } }] });

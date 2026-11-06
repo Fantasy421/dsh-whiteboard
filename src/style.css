@@ -1,55 +1,63 @@
 .dsh-wb-mount,.dsh-wb-surface{height:100%;min-height:0;min-width:0;width:100%}
-/* Body-level surface escapes transformed/overflow-hidden sidebar ancestors.
-   Stay below Excalidraw's body-portaled dialogs (z-index 1000). */
+/* Body-level surface escapes clipped sidebar ancestors; native dialogs stay above. */
 .dsh-wb-surface--expanded{position:fixed;inset:0;z-index:900;box-sizing:border-box;padding:16px;width:auto;height:auto;background:#15203399;overscroll-behavior:contain}
 .dsh-whiteboard{display:flex;flex-direction:column;position:relative;height:100%;min-height:0;min-width:0;background:#fff;color:#202531;font:13px/1.5 system-ui,sans-serif;overflow:hidden}
 .dsh-wb-surface--expanded .dsh-whiteboard{border:1px solid #cdd3e3;border-radius:12px;box-shadow:0 16px 80px #0005}
-.dsh-wb-header{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:8px 10px;border-bottom:1px solid #e9eaf0;flex-shrink:0}
-.dsh-wb-header strong{white-space:nowrap;max-width:55%;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.dsh-wb-status{font-size:11px;color:#677181;flex:1;min-width:36px;text-align:right}
+/* One non-wrapping header. Names truncate instead of creating extra tool rows. */
+.dsh-wb-header{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #e9eaf0;flex-shrink:0;min-width:0}
+.dsh-wb-header strong{flex:1;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dsh-wb-status{font-size:11px;color:#677181;flex:0 0 auto;white-space:nowrap}
 .dsh-wb-status--saved{color:#1b7657}
 .dsh-wb-status--conflict,.dsh-wb-status--offline{color:#ba4d22}
-.dsh-whiteboard button,.dsh-wb-export summary{border:1px solid #dfe2ec;border-radius:6px;background:#fff;color:#30384b;padding:5px 8px;cursor:pointer;font:inherit;white-space:nowrap;min-height:32px;box-sizing:border-box}
-.dsh-whiteboard button:hover,.dsh-wb-export summary:hover{background:#f0efff;border-color:#a39bf1}
+.dsh-whiteboard button,.dsh-wb-menu>summary{border:1px solid #dfe2ec;border-radius:6px;background:#fff;color:#30384b;padding:5px 8px;cursor:pointer;font:inherit;white-space:nowrap;min-height:32px;box-sizing:border-box}
+.dsh-whiteboard button:hover,.dsh-wb-menu>summary:hover{background:#f0efff;border-color:#a39bf1}
 .dsh-whiteboard button:disabled{opacity:.45;cursor:default}
-.dsh-whiteboard button:focus-visible,.dsh-wb-export summary:focus-visible{outline:2px solid #6965db;outline-offset:2px}
-.dsh-whiteboard .dsh-wb-expand{margin-left:auto;color:#fff;background:#6965db;border-color:#6965db;font-weight:600}
+.dsh-whiteboard button:focus-visible,.dsh-wb-menu>summary:focus-visible{outline:2px solid #6965db;outline-offset:2px}
+.dsh-whiteboard .dsh-wb-expand{flex-shrink:0;color:#fff;background:#6965db;border-color:#6965db;font-weight:600}
 .dsh-whiteboard .dsh-wb-expand:hover{background:#5753c5;color:#fff}
-.dsh-wb-navigation{flex-shrink:0;max-height:34%;overflow:auto;box-sizing:border-box;padding:7px 10px;border-bottom:1px solid #e9eaf0;background:#f8f8fc;color:#30384b;font:12px/1.5 system-ui,sans-serif;min-width:0}
-.dsh-wb-navigation__switcher,.dsh-wb-navigation__actions,.dsh-wb-navigation form{display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-width:0}
-.dsh-wb-navigation__switcher>span{flex-basis:100%;overflow-wrap:anywhere;font-size:11px;color:#697183}
-.dsh-wb-navigation input,.dsh-wb-navigation select{border:1px solid #dfe2ec;border-radius:5px;background:#fff;color:#30384b;font:inherit;box-sizing:border-box;min-height:32px;padding:4px 6px;min-width:0;max-width:100%}
-.dsh-wb-navigation input[type="search"]{flex:1 1 100%;width:100%}
-.dsh-wb-navigation select{flex:1 1 90px;width:90px;text-overflow:ellipsis}
-.dsh-wb-navigation button{border:1px solid #dfe2ec;border-radius:6px;background:#fff;color:#30384b;padding:4px 7px;cursor:pointer;font:inherit;white-space:nowrap;min-height:32px;box-sizing:border-box}
-.dsh-wb-navigation button:disabled{opacity:.45;cursor:default}
-.dsh-wb-navigation input:focus-visible,.dsh-wb-navigation select:focus-visible,.dsh-wb-navigation button:focus-visible{outline:2px solid #6965db;outline-offset:1px}
-.dsh-wb-navigation__actions,.dsh-wb-navigation form{margin-top:6px}
-.dsh-wb-navigation form label{flex:1 1 140px;min-width:0}
-.dsh-wb-navigation form input{width:100%}
-.dsh-wb-navigation p{margin:6px 0 0;overflow-wrap:anywhere}
-.dsh-wb-navigation [role="alert"]{color:#9c4d23}
+.dsh-wb-navigation{flex:1;min-width:0;color:#30384b;font:12px/1.5 system-ui,sans-serif}
+.dsh-wb-menu>summary{list-style:none;user-select:none;display:flex;align-items:center;gap:5px;min-width:0}
+.dsh-wb-menu>summary::-webkit-details-marker{display:none}
+.dsh-wb-navigation .dsh-wb-menu>summary{border-color:transparent;padding-left:3px}
+.dsh-wb-board-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.dsh-wb-menu small{flex-shrink:0;border-radius:8px;padding:0 5px;background:#f0eff8;color:#76718e;font-size:10px}
+.dsh-wb-more{flex:0 0 auto}
+.dsh-wb-more>summary{font-size:19px;font-weight:600;line-height:20px;justify-content:center;min-width:32px;padding:4px 7px}
+/* Panels are board-relative, not navigation-relative. Scroll inside board bounds,
+   overlaying the canvas only while open; no nested/clipped export popup. */
+.dsh-wb-menu-panel{position:absolute;left:8px;right:8px;top:6px;pointer-events:auto;box-sizing:border-box;max-height:calc(100% - 14px);overflow:auto;overscroll-behavior:contain;padding:10px;background:#fff;border:1px solid #dfe2ec;border-radius:9px;box-shadow:0 8px 24px #20253126}
+.dsh-wb-menu-panel[data-dsh-wb-panel="tools"]{left:auto;width:min(360px,calc(100% - 16px))}
+.dsh-wb-navigation-alerts{flex-shrink:0;max-height:25%;overflow:auto;padding:8px 10px;background:#fff7e9;border-bottom:1px solid #ead6b0;color:#78551f;font-size:12px}
+.dsh-wb-navigation-alerts p{margin:0;overflow-wrap:anywhere}
+.dsh-wb-navigation-alerts p+p{margin-top:6px}
+.dsh-wb-stage{flex:1;min-height:0;min-width:0;position:relative;display:flex;flex-direction:column}
+.dsh-wb-menu-layer{position:absolute;inset:0;z-index:20;pointer-events:none}
+.dsh-wb-menu-group{display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:7px 0}
+.dsh-wb-menu-group+.dsh-wb-menu-group{border-top:1px solid #eeedf4}
+.dsh-wb-menu-group>span{font-size:11px;color:#737b8b;flex-basis:100%}
+.dsh-wb-menu-group button[aria-pressed="true"]{background:#eeecff;border-color:#6965db;color:#514bd2}
+.dsh-wb-navigation__switcher,.dsh-wb-navigation__actions,.dsh-wb-menu-panel form{display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-width:0}
+.dsh-wb-menu-panel input,.dsh-wb-menu-panel select{border:1px solid #dfe2ec;border-radius:5px;background:#fff;color:#30384b;font:inherit;box-sizing:border-box;min-height:32px;padding:4px 6px;min-width:0;max-width:100%}
+.dsh-wb-menu-panel input[type="search"]{flex:1 1 100%;width:100%}
+.dsh-wb-menu-panel select{flex:1 1 90px;width:90px;text-overflow:ellipsis}
+.dsh-wb-menu-panel input:focus-visible,.dsh-wb-menu-panel select:focus-visible{outline:2px solid #6965db;outline-offset:1px}
+.dsh-wb-navigation__actions,.dsh-wb-menu-panel form{margin-top:8px}
+.dsh-wb-menu-panel form label{flex:1 1 140px;min-width:0}
+.dsh-wb-menu-panel form input{width:100%}
+.dsh-wb-menu-panel p{margin:7px 0 0;overflow-wrap:anywhere}
+.dsh-wb-menu-panel [role="alert"]{color:#9c4d23}
 .dsh-wb-canvas[inert]{opacity:.7}
-.dsh-wb-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 10px;border-bottom:1px solid #ececf2;flex-shrink:0}
 .dsh-wb-zoom{display:flex;gap:2px;align-items:center}
 .dsh-wb-zoom button{min-width:32px;padding:4px 7px;font-variant-numeric:tabular-nums}
 .dsh-wb-zoom button:nth-child(2){min-width:56px}
-.dsh-wb-lines{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
-.dsh-wb-lines>span{font-size:11px;color:#737b8b;margin-right:3px}
-.dsh-wb-lines button{padding:4px 7px}
-.dsh-wb-lines button[aria-pressed="true"]{background:#eeecff;border-color:#6965db;color:#514bd2}
-.dsh-wb-export{position:relative;margin-left:auto}
-.dsh-wb-export summary{list-style:none;user-select:none}
-.dsh-wb-export summary::-webkit-details-marker{display:none}
-.dsh-wb-export>div{position:absolute;right:0;top:calc(100% + 5px);z-index:10;display:flex;gap:4px;padding:6px;background:#fff;box-shadow:0 5px 20px #0002;border:1px solid #dfe2ec;border-radius:8px}
 .dsh-wb-canvas{flex:1;min-height:0;min-width:0;position:relative}
 .dsh-wb-notice{padding:8px 12px;background:#fff4dc;color:#6f4d14;overflow-wrap:anywhere;max-height:25%;overflow:auto;flex-shrink:0}
 .dsh-wb-notice button{margin-left:8px}
 .dsh-wb-hint{padding:6px 10px;border-top:1px solid #ececf2;color:#737b8b;font-size:11px;flex-shrink:0}
-.dsh-wb-loading{position:absolute;left:20px;top:140px;color:#777}
+.dsh-wb-loading{position:absolute;left:20px;top:60px;color:#777}
 .dsh-whiteboard .excalidraw{--color-primary:#6965db;height:100%;width:100%}
 .dsh-whiteboard .excalidraw .App-menu_top{gap:4px}
 .dsh-whiteboard .excalidraw .help-icon{display:none}
 @media(max-width:600px){.dsh-wb-surface--expanded{padding:0}.dsh-wb-surface--expanded .dsh-whiteboard{border:0;border-radius:0}}
 @media(max-height:480px){.dsh-wb-hint{display:none}.dsh-wb-surface--expanded{padding:0}}
-@media(prefers-color-scheme:dark){.dsh-wb-header,.dsh-wb-actions,.dsh-wb-hint{background:#f7f7fb}}
+@media(prefers-color-scheme:dark){.dsh-wb-header,.dsh-wb-hint{background:#f7f7fb}}

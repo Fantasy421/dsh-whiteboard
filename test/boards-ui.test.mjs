@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const output = join(root, 'node_modules', `.boards-ui-${process.pid}.mjs`);
 let Boards;
 test.before(async () => {
-  const result = await build({ entryPoints: [join(root, 'src/Boards.jsx')], bundle: true, write: false, format: 'esm', platform: 'node', external: ['react'], plugins: [{ name: 'editor-stub', setup(builder) {
+  const result = await build({ entryPoints: [join(root, 'src/Boards.jsx')], bundle: true, write: false, format: 'esm', platform: 'node', external: ['react', 'react-dom'], plugins: [{ name: 'editor-stub', setup(builder) {
     builder.onResolve({ filter: /\/Whiteboard\.jsx$/ }, () => ({ path: 'editor', namespace: 'boards-test' }));
     builder.onLoad({ filter: /.*/, namespace: 'boards-test' }, () => ({ loader: 'js', contents: `
       import React from 'react';
@@ -23,7 +23,7 @@ test.before(async () => {
           const unregister = props.registerLeaveGuard(props.boardId, () => state.guard(props.boardId));
           return () => { unregister(); state.unmounts.push(instance); };
         }, []);
-        return React.createElement('mock-editor', {...props, instance}, props.navigation);
+        return React.createElement('mock-editor', {...props, instance}, props.navigation, props.navigationNotice);
       }
     ` }));
   } }] });
@@ -40,11 +40,11 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const makeCatalog = (sessionId = 'session', boards = [{ id: 'default', name: '默认白板' }], revision = 0, activeBoardId = boards[0].id) => ({ sessionId, revision, activeBoardId, boards });
 const text = node => typeof node === 'string' ? node : (node.children || []).map(text).join('');
 
-async function harness(t, { catalog = makeCatalog(), intercept = null, guard = () => true } = {}) {
+async function harness(t, { catalog = makeCatalog(), intercept = null, guard = () => true, openManagement = true } = {}) {
   let server = clone(catalog), created = 0, renderer;
   const calls = [], intervals = new Set(), confirmations = [];
   const old = { window: globalThis.window, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, state: globalThis.__boardsTest };
-  globalThis.window = { confirm: message => { confirmations.push(message); return true; } };
+  globalThis.window = Object.assign(new EventTarget(), { confirm: message => { confirmations.push(message); return true; } });
   globalThis.setInterval = (fn, delay) => { assert.equal(delay, 3000); intervals.add(fn); return fn; };
   globalThis.clearInterval = fn => intervals.delete(fn);
   const state = globalThis.__boardsTest = { guard, instance: 0, mounts: [], unmounts: [] };
@@ -88,10 +88,13 @@ async function harness(t, { catalog = makeCatalog(), intercept = null, guard = (
     editor: () => renderer.root.findByType('mock-editor'),
     byLabel: label => renderer.root.find(node => node.props['aria-label'] === label),
     button: label => renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label || text(node) === label),
-    click: async label => { const button = api.button(label); assert.ok(button, `missing button ${label}`); assert.equal(Boolean(button.props.disabled), false, `${label} disabled`); await act(async () => button.props.onClick()); },
-    input: async (label, value) => act(async () => api.byLabel(label).props.onChange({ target: { value } })),
-    select: async id => api.input('切换白板', id),
-    submit: async () => act(async () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} })),
+    manager: () => renderer.root.findAllByProps({ 'data-dsh-wb-menu': 'boards' })[0],
+    openManager: async () => { const menu = api.manager(); if (menu && !menu.props.open) await act(async () => menu.findByType('summary').props.onClick({ preventDefault() {} })); },
+    closeManager: async () => { const menu = api.manager(); if (menu?.props.open) await act(async () => menu.findByType('summary').props.onClick({ preventDefault() {} })); },
+    click: async label => { if (!api.button(label)) await api.openManager(); const button = api.button(label); assert.ok(button, `missing button ${label}`); assert.equal(Boolean(button.props.disabled), false, `${label} disabled`); await act(async () => button.props.onClick()); if (openManagement) await api.openManager(); },
+    input: async (label, value) => { if (!renderer.root.findAll(node => node.props['aria-label'] === label).length) await api.openManager(); await act(async () => api.byLabel(label).props.onChange({ target: { value } })); },
+    select: async id => { await api.input('切换白板', id); if (openManagement) await api.openManager(); },
+    submit: async () => { await act(async () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} })); if (openManagement) await api.openManager(); },
     named: async (action, name) => { await api.click(action); await api.input('白板名称', name); await api.submit(); },
     tick: async () => act(async () => { for (const callback of intervals) callback(); }),
     update: async next => { props = { ...props, ...next }; await act(async () => renderer.update(React.createElement(Boards, props))); },
@@ -100,6 +103,11 @@ async function harness(t, { catalog = makeCatalog(), intercept = null, guard = (
     content: () => text(renderer.toJSON() || {}),
     actions: () => calls.filter(call => call.method === 'manage'),
   };
+  if (api.manager()) {
+    assert.equal(api.manager().props.open, false, 'new editor occurrences must start with management collapsed');
+    assert.equal(renderer.root.findAllByType('input').length, 0, 'closed management must not mount focusable form/search controls');
+    if (openManagement) await api.openManager();
+  }
   return api;
 }
 
@@ -410,4 +418,45 @@ test('name form trims and enforces 80 characters before any write', async t => {
   await h.input('白板名称', ` ${'x'.repeat(80)} `);
   await h.submit();
   assert.equal(h.actions()[0].payload.name.length, 80);
+});
+
+
+test('management starts collapsed and only mounts forms on demand without replacing the editor', async t => {
+  const h = await harness(t, { openManagement: false });
+  const instance = h.editor().props.instance;
+  assert.equal(h.manager().props.open, false);
+  assert.equal(h.button('新建白板'), undefined);
+  assert.equal(h.root().findAllByType('input').length, 0);
+  await h.openManager();
+  await h.click('新建白板');
+  assert.equal(h.byLabel('白板名称').props.autoFocus, true);
+  await h.closeManager();
+  assert.equal(h.root().findAllByType('form').length, 0);
+  assert.equal(h.root().findAllByType('input').length, 0);
+  await h.openManager();
+  assert.equal(h.root().findAllByType('form').length, 0, 'cancelled form must not resurrect/steal focus');
+  assert.equal(h.editor().props.instance, instance);
+  await act(async () => window.dispatchEvent(new Event('pointerdown')));
+  assert.equal(h.manager().props.open, false, 'outside interaction closes the menu');
+  await h.openManager();
+  await h.update({ visible: false });
+  assert.equal(h.manager().props.open, false);
+  await h.update({ visible: true });
+  assert.equal(h.manager().props.open, false);
+  assert.equal(h.editor().props.instance, instance, 'hide/disclosure changes retain draft ownership');
+  assert.equal(h.actions().length, 0, 'opening/collapsing is not a catalog mutation');
+});
+
+test('missing-draft and save-guard warnings remain visible while management is collapsed', async t => {
+  const h = await harness(t, { openManagement: false, catalog: makeCatalog('session', [{id:'a',name:'A'},{id:'b',name:'B'}]), guard: () => false });
+  await h.select('b');
+  await h.closeManager();
+  assert.ok(h.content().includes('未保存'));
+  assert.equal(h.editor().props.boardId, 'a');
+  h.setServer(makeCatalog('session', [{id:'b',name:'B'}], 1));
+  await h.tick();
+  assert.equal(h.manager().props.open, false);
+  assert.ok(h.content().includes('当前白板已被删除'));
+  assert.ok(h.button('关闭已删除白板'), 'export/discard escape must not hide inside management');
+  assert.equal(h.editor().props.boardId, 'a', 'a collapsed menu cannot force-switch a deleted draft');
 });

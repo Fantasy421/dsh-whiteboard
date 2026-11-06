@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { zoomAtCenter, MIN_ZOOM, MAX_ZOOM } from './viewport.mjs';
 import { Excalidraw, MainMenu, CaptureUpdateAction, restoreElements, newElementWith, exportToBlob, exportToSvg, serializeAsJSON } from '@excalidraw/excalidraw';
@@ -6,6 +6,7 @@ import { LINE_STYLES, styleLinearElement, linearPathMidpoint } from './linear.mj
 import { BoardSync } from './sync.mjs';
 import { safeNativeInput } from './scene.mjs';
 import { recoveryFor } from './recovery.mjs';
+import { HeaderMenu, HeaderMenuContext } from './header.jsx';
 const LINE_LABELS = { straight: '直线', curved: '曲线', polyline: '折线' };
 const editableLine = element => !element.isDeleted && !element.locked && ['line', 'arrow'].includes(element.type);
 const normalizeScene = scene => JSON.parse(JSON.stringify({ ...scene, elements: restoreElements(scene.elements, null, { repairBindings: true }) }));
@@ -16,12 +17,16 @@ function download(blob, name) {
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
-export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作白板', rpc, visible = true, signal, navigation = null, registerLeaveGuard, blocked = false }) {
+export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作白板', rpc, visible = true, signal, navigation = null, navigationNotice = null, registerLeaveGuard, blocked = false }) {
   const [api, setApi] = useState(null);
   const [status, setStatus] = useState({ kind: 'loading', message: '' });
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [lineSelection, setLineSelection] = useState({ count: 0, style: null });
+  const [menu, setMenu] = useState(null);
+  const summaryRefs = useRef(new Map());
+  const [menuRoot, setMenuRoot] = useState(null);
+  const menus = useMemo(() => ({ active: menu, setActive: setMenu, summaries: summaryRefs, panelRoot: menuRoot }), [menu, menuRoot]);
   // A stable portal target preserves the native editor, selection and undo stack.
   // Moving its DOM host escapes sidebar clipping without reparenting the React tree.
   const [surface] = useState(() => document.createElement('div'));
@@ -107,8 +112,8 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
   }, [surface, expanded, api, visible, signal]);
   useEffect(() => {
     if (!visible) {
-      setFullscreen(false); busyRef.current = false;
-      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null }, captureUpdate: CaptureUpdateAction.NEVER });
+      setFullscreen(false); setMenu(null); busyRef.current = false;
+      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null, contextMenu: null }, captureUpdate: CaptureUpdateAction.NEVER });
     }
   }, [visible, api]);
   useEffect(() => {
@@ -117,8 +122,8 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
       surface.className = 'dsh-wb-surface';
       if (mountRef.current) mountRef.current.appendChild(surface); else surface.remove();
       busyRef.current = false;
-      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null }, captureUpdate: CaptureUpdateAction.NEVER });
-      setFullscreen(false);
+      api?.updateScene({ appState: { openDialog: null, openMenu: null, openPopup: null, contextMenu: null }, captureUpdate: CaptureUpdateAction.NEVER });
+      setFullscreen(false); setMenu(null);
     };
     signal?.addEventListener('abort', close, { once: true });
     if (signal?.aborted) close();
@@ -132,13 +137,22 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
     setZoom(next.zoom.value);
   }
   function onKeyDownCapture(event) {
-    if (!expanded || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || busyRef.current) return;
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
     const state = api?.getAppState();
     const target = event.target;
+    // Header menus get one Escape before an idle fullscreen exit. Native dialogs
+    // and unfinished drawing/text input retain priority even if a menu is open.
+    const nativeBusy = busyRef.current || state?.editingTextElement || state?.editingLinearElement || state?.newElement || state?.multiElement || state?.isResizing || state?.isRotating;
+    if (menu && !nativeBusy && !state?.openDialog && !state?.openMenu && !state?.openPopup && !state?.contextMenu && state?.showHyperlinkPopup !== 'editor' && !state?.pasteDialog?.shown && !target?.closest?.('[role="dialog"], .Modal')) {
+      event.preventDefault(); event.stopPropagation();
+      setMenu(null); summaryRefs.current.get(menu)?.focus({ preventScroll: true });
+      return;
+    }
+    if (!expanded || busyRef.current) return;
     // Native Excalidraw stops Escape in bubble phase. Capture only a truly idle
     // Escape; editing, selections, menus and body-portaled dialogs keep priority.
     if (target?.isContentEditable || target?.closest?.('input, textarea, select, [role="dialog"], .Modal, details[open]')) return;
-    if (!state || state.editingTextElement || state.editingLinearElement || state.editingFrame || state.editingGroupId || state.newElement || state.multiElement || state.selectionElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged || state.openDialog || state.openMenu || state.openPopup || state.pasteDialog?.shown || Object.values(state.selectedElementIds ?? {}).some(Boolean) || (state.activeTool && state.activeTool.type !== 'selection')) return;
+    if (!state || state.editingTextElement || state.editingLinearElement || state.editingFrame || state.editingGroupId || state.newElement || state.multiElement || state.selectionElement || state.isResizing || state.isRotating || state.selectedElementsAreBeingDragged || state.openDialog || state.openMenu || state.openPopup || state.contextMenu || state.showHyperlinkPopup === 'editor' || state.pasteDialog?.shown || Object.values(state.selectedElementIds ?? {}).some(Boolean) || (state.activeTool && state.activeTool.type !== 'selection')) return;
     event.preventDefault(); event.stopPropagation();
     setFullscreen(false);
     expandRef.current?.focus({ preventScroll: true });
@@ -247,35 +261,36 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
     try { await syncRef.current.discardLocalAndReload(); }
     catch (error) { setStatus({ kind: 'offline', message: error.message }); }
   }
-  return <><div className="dsh-wb-mount" ref={mountRef} />{createPortal(<section className="dsh-whiteboard" aria-label="AI 协作白板" onKeyDownCapture={onKeyDownCapture} onKeyDown={event => event.stopPropagation()}>
+  return <><div className="dsh-wb-mount" ref={mountRef} />{createPortal(<HeaderMenuContext.Provider value={menus}><section className="dsh-whiteboard" aria-label="AI 协作白板" onKeyDownCapture={onKeyDownCapture} onKeyDown={event => event.stopPropagation()}>
     <header className="dsh-wb-header">
-      <strong title={boardName}>✎ {boardName}</strong>
-      <span className={`dsh-wb-status dsh-wb-status--${status.kind}`} role="status" title={status.message}>{LABELS[status.kind] ?? status.kind}</span>
-      <button ref={expandRef} className="dsh-wb-expand" onClick={() => setFullscreen(f => !f)} aria-label={expanded ? '返回侧栏' : '大屏编辑'} aria-expanded={expanded} title={expanded ? '返回侧栏（Esc）' : '在页面大屏中编辑，不丢失当前视图和撤销历史'}>{expanded ? '↙ 返回侧栏' : '⤢ 大屏编辑'}</button>
+      {navigation || <strong title={boardName}>✎ {boardName}</strong>}
+      <span className={`dsh-wb-status dsh-wb-status--${status.kind}`} role="status" title={status.message || LABELS[status.kind]}>{LABELS[status.kind] ?? status.kind}</span>
+      <button ref={expandRef} className="dsh-wb-expand" onClick={() => { setMenu(null); setFullscreen(f => !f); }} aria-label={expanded ? '返回侧栏' : '大屏编辑'} aria-expanded={expanded} title={expanded ? '返回侧栏（Esc）' : '在页面大屏中编辑，不丢失当前视图和撤销历史'}>{expanded ? '↙ 返回' : '⤢ 大屏'}</button>
+      <HeaderMenu id="tools" label="更多白板操作" summary="···" title="缩放、保存和导出；选中连线时可一键调整线型" visible={visible} signal={signal} className="dsh-wb-more">
+        <div className="dsh-wb-menu-group" role="group" aria-label="画布缩放">
+          <span>视图</span><div className="dsh-wb-zoom">
+            <button disabled={!ready || zoom <= MIN_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value / 1.25)} aria-label="缩小画布" title="缩小画布">−</button>
+            <button disabled={!ready} onClick={() => changeZoom(1)} aria-label="重置缩放为 100%" title="点击恢复 100%">{Math.round(zoom * 100)}%</button>
+            <button disabled={!ready || zoom >= MAX_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value * 1.25)} aria-label="放大画布" title="放大画布">＋</button>
+          </div><button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应</button>
+        </div>
+        {lineSelection.count > 0 && <div className="dsh-wb-menu-group" role="group" aria-label="选中连线走线" title={`修改 ${lineSelection.count} 条未锁定的连线`}>
+          <span>选中连线</span>{LINE_STYLES.map(lineStyle => <button key={lineStyle} disabled={!ready || !visible || signal?.aborted || blocked} aria-label={`连线：${LINE_LABELS[lineStyle]}`} aria-pressed={lineSelection.style === lineStyle} onClick={() => changeLineStyle(lineStyle)}>{LINE_LABELS[lineStyle]}</button>)}
+        </div>}
+        <div className="dsh-wb-menu-group" role="group" aria-label="保存和导出">
+          <button disabled={!ready || blocked} onClick={() => syncRef.current?.tick()}>保存</button>
+          <button disabled={!ready} onClick={() => exportFile('png')}>PNG</button>
+          <button disabled={!ready} onClick={() => exportFile('svg')}>SVG</button>
+          <button disabled={!ready} onClick={() => exportFile('excalidraw')}>源文件</button>
+        </div>
+      </HeaderMenu>
     </header>
-    {navigation}
-    <div className="dsh-wb-actions">
-      <div className="dsh-wb-zoom" role="group" aria-label="画布缩放">
-        <button disabled={!ready || zoom <= MIN_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value / 1.25)} aria-label="缩小画布" title="缩小画布">−</button>
-        <button disabled={!ready} onClick={() => changeZoom(1)} aria-label="重置缩放为 100%" title="点击恢复 100%">{Math.round(zoom * 100)}%</button>
-        <button disabled={!ready || zoom >= MAX_ZOOM} onClick={() => changeZoom(api.getAppState().zoom.value * 1.25)} aria-label="放大画布" title="放大画布">＋</button>
-      </div>
-      <div className="dsh-wb-lines" role="group" aria-label="选中连线走线" title={lineSelection.count ? `修改 ${lineSelection.count} 条未锁定的连线` : '先用选择工具选中线条或箭头'}>
-        <span>连线</span>{LINE_STYLES.map(lineStyle => <button key={lineStyle} disabled={!ready || !lineSelection.count || !visible || signal?.aborted || blocked} aria-label={`连线：${LINE_LABELS[lineStyle]}`} aria-pressed={lineSelection.style === lineStyle} onClick={() => changeLineStyle(lineStyle)}>{LINE_LABELS[lineStyle]}</button>)}
-      </div>
-      <button disabled={!ready} onClick={() => api?.scrollToContent(undefined, { fitToContent: true })}>适应</button>
-      <button disabled={!ready || blocked} onClick={() => syncRef.current?.tick()}>保存</button>
-      <details className="dsh-wb-export"><summary>导出 ▾</summary><div>
-        <button disabled={!ready} onClick={() => exportFile('png')}>PNG</button>
-        <button disabled={!ready} onClick={() => exportFile('svg')}>SVG</button>
-        <button disabled={!ready} onClick={() => exportFile('excalidraw')}>源文件</button>
-      </div></details>
-    </div>
+    {navigationNotice && <div className="dsh-wb-navigation-alerts">{navigationNotice}</div>}
     {status.message && <div className="dsh-wb-notice" role="alert">{status.message}
       {status.kind === 'conflict' && <button onClick={reloadRemote}>加载服务器版本</button>}
       {!ready && status.kind === 'offline' && <button onClick={() => setRetry(n => n + 1)}>重新加载</button>}
     </div>}
-    <div className="dsh-wb-canvas" inert={blocked ? '' : undefined} aria-busy={blocked || undefined} style={{ visibility: ready ? 'visible' : 'hidden' }}>
+    <div className="dsh-wb-stage"><div className="dsh-wb-canvas" inert={blocked ? '' : undefined} aria-busy={blocked || undefined} style={{ visibility: ready ? 'visible' : 'hidden' }}>
       <Excalidraw excalidrawAPI={onApi} onChange={onChange} langCode="zh-CN" name={boardName}
         handleKeyboardGlobally={false} autoFocus={false} aiEnabled={false} validateEmbeddable={false}
         onLinkOpen={(_element, event) => event.preventDefault()}
@@ -284,8 +299,8 @@ export function Whiteboard({ sessionId, boardId = 'default', boardName = '协作
         UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false, saveToActiveFile: false } }}>
         <MainMenu><MainMenu.DefaultItems.ClearCanvas /><MainMenu.DefaultItems.ToggleTheme /></MainMenu>
       </Excalidraw>
-    </div>
+    </div><div className="dsh-wb-menu-layer" ref={setMenuRoot} /></div>
     {!ready && <div className="dsh-wb-loading">{status.kind === 'offline' ? '画板暂未加载，请重试。' : '正在准备画板…'}</div>}
     <footer className="dsh-wb-hint">{expanded ? '大屏编辑 · Esc 返回侧栏 · 缩放不改变共享图形。' : '侧栏太窄？点右上角“大屏编辑”。在聊天中告诉 AI 想画什么。'}</footer>
-  </section>, surface)}</>;
+  </section></HeaderMenuContext.Provider>, surface)}</>;
 }

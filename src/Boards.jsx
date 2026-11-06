@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Whiteboard } from './Whiteboard.jsx';
+import { HeaderMenu } from './header.jsx';
 
 const LEAVE_WARNING = '有未保存或冲突修改，请先保存或导出后处理';
 const REQUEST_TIMEOUT = 10000;
@@ -36,9 +37,17 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
   const [name, setName] = useState('');
   const catalogRef = useRef(null), selectedRef = useRef(null), guards = useRef(new Map());
   const pendingRef = useRef(false), readRef = useRef(null), generation = useRef(0);
+  const formInvoker = useRef(null), restoreFormFocus = useRef(false);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const alive = () => !requests.signal.aborted && !signal?.aborted;
+
+  useEffect(() => {
+    if (!form && !pending && restoreFormFocus.current) {
+      restoreFormFocus.current = false;
+      if (visible && alive()) formInvoker.current?.focus({ preventScroll: true });
+    }
+  }, [form, pending, visible, requests]);
 
   // Race even an RPC implementation that ignores AbortSignal. Late results can
   // neither mutate this owner nor occupy its serial/read gates indefinitely.
@@ -162,6 +171,7 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
       if (action === 'activate' && next.activeBoardId !== boardId) throw new Error('服务器未确认切换白板');
       if (next.revision < baseline.revision) throw new Error('服务器返回了过期目录');
       applyCatalog(next);
+      if (action === 'rename') restoreFormFocus.current = true;
       setForm(null); setName('');
       if (swapsScene) {
         // Blocking the native canvas during management closes most races, but a
@@ -201,8 +211,9 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
   const previous = index > 0 ? catalog.boards[index - 1] : null;
   const next = index >= 0 ? catalog.boards[index + 1] : null;
   const trimmedName = name.trim();
-  function openForm(action) {
+  function openForm(action, event) {
     if (pendingRef.current || !alive()) return;
+    formInvoker.current = event?.currentTarget;
     setForm(action); setName(action === 'rename' ? selected.name : '');
   }
   function removeSelected() {
@@ -222,9 +233,18 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
     setForm(null);
     setNotice('已关闭已删除白板的本地草稿。');
   }
+  const alerts = pending || missing || notice || error ? <>
+    {pending && <p role="status">正在保存并处理白板操作，请稍候…</p>}
+    {missing && <p role="alert">当前白板已被删除；为避免丢失修改，草稿仍保留在编辑器中。请先导出未保存内容，再选择其他白板或明确关闭此草稿。 <button type="button" disabled={pending} onClick={closeDeletedDraft}>关闭已删除白板</button></p>}
+    {notice && <p role="alert">{notice}</p>}
+    {error && <p role="alert">{error} <button type="button" disabled={pending || loading} onClick={() => refresh()}>重试</button></p>}
+  </> : null;
   const navigation = <div className="dsh-wb-navigation" aria-label="白板导航" aria-busy={pending}>
+    <HeaderMenu id="boards" label="白板管理与切换" visible={visible} signal={requests.signal}
+      title={`${selected.name} · 共 ${catalog.boards.length} 张白板，点击管理和切换`}
+      summary={<><span className="dsh-wb-board-name">✎ {selected.name}</span><small>{catalog.boards.length}</small><span aria-hidden="true">⌄</span></>}
+      onClose={() => { setForm(null); setName(''); }}>
     <div className="dsh-wb-navigation__switcher">
-      <span aria-live="polite">共 {catalog.boards.length} 张白板 · 当前：{selected.name}</span>
       <input type="search" aria-label="搜索白板" placeholder="搜索名称或 ID" value={search} onChange={event => setSearch(event.target.value)} />
       <button type="button" aria-label="上一张白板" title={previous ? `上一张 ${index}/${catalog.boards.length}：${previous.name}` : '已是第一张白板'} disabled={pending || !previous} onClick={() => manage('activate', { boardId: previous.id })}>上一张</button>
       <select aria-label="切换白板" value={selected.id} disabled={pending} onChange={event => manage('activate', { boardId: event.target.value })}>
@@ -234,8 +254,8 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
       <button type="button" aria-label="下一张白板" title={next ? `下一张 ${index + 2}/${catalog.boards.length}：${next.name}` : '已是最后一张白板'} disabled={pending || !next} onClick={() => manage('activate', { boardId: next.id })}>下一张</button>
     </div>
     <div className="dsh-wb-navigation__actions">
-      <button type="button" disabled={pending} onClick={() => openForm('create')}>新建白板</button>
-      <button type="button" disabled={pending || missing} onClick={() => openForm('rename')}>重命名白板</button>
+      <button type="button" disabled={pending} onClick={event => openForm('create', event)}>新建白板</button>
+      <button type="button" disabled={pending || missing} onClick={event => openForm('rename', event)}>重命名白板</button>
       <button type="button" disabled={pending || missing || catalog.boards.length <= 1} onClick={removeSelected}>删除白板</button>
       <button type="button" disabled={pending || loading} onClick={() => refresh()}>刷新列表</button>
     </div>
@@ -245,12 +265,9 @@ function BoardsOwner({ sessionId, rpc, visible, signal }) {
     }}>
       <label>白板名称 <input aria-label="白板名称" value={name} maxLength={80} autoFocus disabled={pending} onChange={event => setName(event.target.value)} /></label>
       <button type="submit" disabled={pending || !trimmedName || trimmedName.length > 80}>确认</button>
-      <button type="button" disabled={pending} onClick={() => setForm(null)}>取消</button>
+      <button type="button" disabled={pending} onClick={() => { restoreFormFocus.current = true; setForm(null); setName(''); }}>取消</button>
     </form>}
-    {pending && <p role="status">正在保存并处理白板操作，请稍候…</p>}
-    {missing && <p role="alert">当前白板已被删除；为避免丢失修改，草稿仍保留在编辑器中。请先导出未保存内容，再选择其他白板或明确关闭此草稿。 <button type="button" disabled={pending} onClick={closeDeletedDraft}>关闭已删除白板</button></p>}
-    {notice && <p role="alert">{notice}</p>}
-    {error && <p role="alert">{error} <button type="button" disabled={pending || loading} onClick={() => refresh()}>重试</button></p>}
+    </HeaderMenu>
   </div>;
-  return <Whiteboard key={JSON.stringify([sessionId, selected.id])} sessionId={sessionId} boardId={selected.id} boardName={selected.name} rpc={rpc} visible={visible} blocked={pending} signal={requests.signal} navigation={navigation} registerLeaveGuard={registerLeaveGuard} />;
+  return <Whiteboard key={JSON.stringify([sessionId, selected.id])} sessionId={sessionId} boardId={selected.id} boardName={selected.name} rpc={rpc} visible={visible} blocked={pending} signal={requests.signal} navigation={navigation} navigationNotice={alerts} registerLeaveGuard={registerLeaveGuard} />;
 }
