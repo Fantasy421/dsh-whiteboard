@@ -29,16 +29,18 @@ test('reading demo has explicit one-hop bindings and an unrelated comparison nod
   assert.ok(architecture.elements.some(el => el.type === 'arrow' && !el.roundness && el.points.length > 2));
 });
 
-test('front page distinguishes unrecorded GUI demos from generated fixtures and ships its documentation', async () => {
+test('product front page ships screenshots and links detailed verification without process narration', async () => {
   const readme = await readFile(new URL('README.md', root), 'utf8');
   const pkg = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
-  assert.match(readme, /真实 GIF 尚未录制/u);
-  assert.match(readme, /代码构建.*虚构/u);
-  assert.match(readme, /不是.*Computer Use 实录/u);
+  const verification = await readFile(new URL('docs/verification.md', root), 'utf8');
+  const examples = await readFile(new URL('examples/README.md', root), 'utf8');
+  assert.match(readme, /\]\(docs\/verification\.md\)/u);
+  assert.match(verification, /未|尚|没有/u);
+  assert.match(examples, /代码|生成/u);
+  assert.doesNotMatch(readme, /用户提供|本代理|本轮|浏览器扩展未连接|真实 GIF 尚未录制/u);
   assert.ok(pkg.files.includes('docs/*.md'));
   assert.ok(pkg.files.includes('examples'));
   assert.ok(pkg.files.includes('docs/media/*.jpg'));
-  assert.match(readme, /原始截图由用户提供/u);
   for (const name of ['sidebar-entry.jpg', 'sidebar-diagram.jpg']) {
     assert.ok(readme.includes(`](docs/media/${name})`));
     const bytes = await readFile(new URL(`docs/media/${name}`, root));
