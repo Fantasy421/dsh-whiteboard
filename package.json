@@ -18,6 +18,7 @@
     "test",
     "docs/*.md",
     "docs/media/*.gif",
+    "docs/media/*.jpg",
     "examples",
     "licenses",
     "cordis.patch.yml",

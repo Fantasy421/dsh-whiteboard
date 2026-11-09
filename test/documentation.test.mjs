@@ -37,6 +37,13 @@ test('front page distinguishes unrecorded GUI demos from generated fixtures and 
   assert.match(readme, /不是.*Computer Use 实录/u);
   assert.ok(pkg.files.includes('docs/*.md'));
   assert.ok(pkg.files.includes('examples'));
+  assert.ok(pkg.files.includes('docs/media/*.jpg'));
+  assert.match(readme, /原始截图由用户提供/u);
+  for (const name of ['sidebar-entry.jpg', 'sidebar-diagram.jpg']) {
+    assert.ok(readme.includes(`](docs/media/${name})`));
+    const bytes = await readFile(new URL(`docs/media/${name}`, root));
+    assert.equal(bytes.subarray(0, 3).toString('hex'), 'ffd8ff');
+  }
   assert.doesNotMatch(readme, /!\[[^\]]*\]\([^)]*\.gif\)/u, 'do not publish nonexistent recording placeholders');
 });
 
